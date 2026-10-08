@@ -1,0 +1,207 @@
+import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from common.clock import clock
+from common.schemas import DecisionOutcome
+
+
+class CumulativeLedger:
+    def __init__(self, db_path: str = "guard.db", limits_path: str = "policies/limits.yaml"):
+        self.db_path = db_path
+        self.limits_path = limits_path
+        self._init_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cumulative_ledger (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reservation_id TEXT UNIQUE NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    amount INTEGER NOT NULL,
+                    status TEXT NOT NULL, -- RESERVED | EXECUTED | RELEASED
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ledger_key 
+                ON cumulative_ledger(agent_id, action, target, status, created_at)
+                """
+            )
+            conn.commit()
+
+    def check_and_reserve(
+        self,
+        reservation_id: str,
+        agent_id: str,
+        action: str,
+        target: str,
+        amount: int,
+        soft_limit: int = 50000,
+        hard_cap: int = 200000,
+        rapid_count: int = 5,
+        rapid_window_seconds: int = 600,
+        window_hours: int = 24,
+        only_check: bool = False,
+        conn: Optional[sqlite3.Connection] = None,
+        bypass_soft_limit: bool = False,
+    ) -> Tuple[DecisionOutcome, str, int, int]:
+        """
+        Runs cumulative gate evaluation atomically.
+        If conn is provided, executes within the caller's transaction.
+        Returns: (decision, reason, current_total_with_amount, prior_rapid_count)
+        """
+        if amount <= 0:
+            return DecisionOutcome.ALLOW, "no_amount", 0, 0
+
+        now_utc = clock.now_utc()
+        now_iso = now_utc.isoformat()
+        window_start_iso = (now_utc - timedelta(hours=window_hours)).isoformat()
+        rapid_start_iso = (now_utc - timedelta(seconds=rapid_window_seconds)).isoformat()
+        reservation_expiry_iso = (now_utc + timedelta(seconds=60)).isoformat()
+
+        should_close = False
+        if conn is None:
+            conn = self._get_connection()
+            should_close = True
+            conn.execute("BEGIN IMMEDIATE")
+
+        try:
+            # 1. Calculate active total within 24h window
+            # Active = EXECUTED or (RESERVED and expires_at > now)
+            cursor = conn.execute(
+                """
+                SELECT SUM(amount) as total_amount
+                FROM cumulative_ledger
+                WHERE agent_id = ? AND action = ? AND target = ?
+                  AND created_at >= ?
+                  AND (status = 'EXECUTED' OR (status = 'RESERVED' AND expires_at > ?))
+                """,
+                (agent_id, action, target, window_start_iso, now_iso),
+            )
+            row = cursor.fetchone()
+            current_active_total = int(row["total_amount"]) if row and row["total_amount"] is not None else 0
+            new_total = current_active_total + amount
+
+            # 2. Count prior same-key actions in the rapid window
+            cursor = conn.execute(
+                """
+                SELECT COUNT(*) as rapid_cnt
+                FROM cumulative_ledger
+                WHERE agent_id = ? AND action = ? AND target = ?
+                  AND created_at >= ?
+                  AND (status = 'EXECUTED' OR (status = 'RESERVED' AND expires_at > ?))
+                """,
+                (agent_id, action, target, rapid_start_iso, now_iso),
+            )
+            row = cursor.fetchone()
+            prior_rapid_count = int(row["rapid_cnt"]) if row and row["rapid_cnt"] is not None else 0
+
+            # 3. Evaluate limits
+            if new_total > hard_cap:
+                if should_close:
+                    conn.rollback()
+                return (
+                    DecisionOutcome.BLOCK,
+                    f"hard_cap_exceeded: total {new_total} > {hard_cap}",
+                    new_total,
+                    prior_rapid_count,
+                )
+
+            if not bypass_soft_limit:
+                if new_total > soft_limit and prior_rapid_count >= rapid_count:
+                    if should_close:
+                        conn.rollback()
+                    return (
+                        DecisionOutcome.BLOCK,
+                        f"rapid_velocity_exceeded: rapid_count {prior_rapid_count} >= {rapid_count} and total {new_total} > {soft_limit}",
+                        new_total,
+                        prior_rapid_count,
+                    )
+
+                if new_total > soft_limit:
+                    if should_close:
+                        conn.rollback()
+                    return (
+                        DecisionOutcome.REVIEW,
+                        f"soft_limit_exceeded: total {new_total} > {soft_limit}",
+                        new_total,
+                        prior_rapid_count,
+                    )
+
+            # 4. If ALLOW and not only_check, create active reservation
+            if not only_check:
+                conn.execute(
+                    """
+                    INSERT INTO cumulative_ledger 
+                    (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                    """,
+                    (
+                        reservation_id,
+                        agent_id,
+                        action,
+                        target,
+                        amount,
+                        now_iso,
+                        reservation_expiry_iso,
+                        now_iso,
+                    ),
+                )
+                if should_close:
+                    conn.commit()
+            else:
+                if should_close:
+                    conn.rollback()
+
+            return DecisionOutcome.ALLOW, "within_limits", new_total, prior_rapid_count
+
+        except Exception as e:
+            if should_close:
+                conn.rollback()
+            raise e
+        finally:
+            if should_close:
+                conn.close()
+
+    def confirm_reservation(self, reservation_id: str, outcome: str) -> bool:
+        """
+        Transition reservation to EXECUTED if successful, or RELEASED if failed.
+        """
+        now_iso = clock.now_iso()
+        target_status = "EXECUTED" if outcome == "executed" else "RELEASED"
+
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE cumulative_ledger
+                SET status = ?, updated_at = ?
+                WHERE reservation_id = ? AND status = 'RESERVED'
+                """,
+                (target_status, now_iso, reservation_id),
+            )
+            affected = cursor.rowcount
+            conn.commit()
+            return affected > 0
+
+    def reset_ledger(self) -> None:
+        """Clear ledger table for demo/test reset."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM cumulative_ledger")
+            conn.commit()
