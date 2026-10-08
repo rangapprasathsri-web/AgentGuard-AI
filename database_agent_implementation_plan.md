@@ -161,7 +161,7 @@ The model should receive a structured context rather than only a raw user messag
 │ 10. Consistency Requirements                │
 │ 11. Security Requirements                   │
 │ 12. Compliance Requirements                 │
-│ 13. Budget / Infrastructure Constraints      │
+│ 13. Budget / Infrastructure Constraints     │
 │ 14. Growth Expectations                     │
 │ 15. Existing Technology Constraints         │
 │ 16. RAG Retrieved Database Knowledge        │
