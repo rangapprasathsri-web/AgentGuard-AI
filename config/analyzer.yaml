@@ -1,0 +1,5 @@
+provider: openrouter
+model: qwen/qwen-2.5-72b-instruct
+timeout_seconds: 4.0
+temperature: 0.1
+max_tokens: 500

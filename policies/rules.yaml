@@ -1,0 +1,30 @@
+rules:
+  - id: AGT-001
+    name: Agent Active Verification
+    policy_ref: sec_policy_agent_identity
+    description: Agent must exist in registry and have active status
+    severity: BLOCK
+
+  - id: PERM-001
+    name: Action Permission Verification
+    policy_ref: sec_policy_least_privilege
+    description: Agent must hold explicit permission for the requested action and target pattern
+    severity: BLOCK
+
+  - id: DATA-004
+    name: PII Production Deletion Guard
+    policy_ref: data_policy_pii_retention
+    description: Deletion of production PII resources is strictly prohibited
+    severity: BLOCK
+
+  - id: INJ-002
+    name: External Content Untrusted Mutation Guard
+    policy_ref: sec_policy_prompt_injection
+    description: External content sources cannot directly trigger destructive or deployment actions
+    severity: BLOCK
+
+  - id: REG-003
+    name: Unknown Target Guard
+    policy_ref: sec_policy_target_governance
+    description: Unknown targets cannot be subjected to destructive, deploy, or permission change operations
+    severity: BLOCK

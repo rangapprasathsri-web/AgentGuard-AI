@@ -1,0 +1,38 @@
+{
+  "AGT-001": {
+    "policy_ref": "sec_policy_agent_identity",
+    "document": "security_policy.md",
+    "title": "Agent Identity Verification",
+    "section": "1. sec_policy_agent_identity: Agent Identity Verification"
+  },
+  "PERM-001": {
+    "policy_ref": "sec_policy_least_privilege",
+    "document": "security_policy.md",
+    "title": "Least Privilege and Access Control",
+    "section": "2. sec_policy_least_privilege: Least Privilege and Access Control"
+  },
+  "DATA-004": {
+    "policy_ref": "data_policy_pii_retention",
+    "document": "data_policy.md",
+    "title": "PII Retention and Protection",
+    "section": "2. data_policy_pii_retention: PII Retention and Protection"
+  },
+  "INJ-002": {
+    "policy_ref": "sec_policy_prompt_injection",
+    "document": "security_policy.md",
+    "title": "Indirect Injection and External Content Defense",
+    "section": "3. sec_policy_prompt_injection: Indirect Injection and External Content Defense"
+  },
+  "REG-003": {
+    "policy_ref": "sec_policy_target_governance",
+    "document": "security_policy.md",
+    "title": "Target Governance and Default-Deny",
+    "section": "4. sec_policy_target_governance: Target Governance and Default-Deny"
+  },
+  "CUM-001": {
+    "policy_ref": "fin_policy_cumulative_limits",
+    "document": "finance_policy.md",
+    "title": "Cumulative Thresholds and Spending Limits",
+    "section": "2. fin_policy_cumulative_limits: Cumulative Thresholds and Spending Limits"
+  }
+}

@@ -1,0 +1,64 @@
+agents:
+  analytics-agent-01:
+    department: analytics
+    status: active
+    permissions:
+      - action: READ
+        target_pattern: sales_db
+    baseline:
+      typical_actions:
+        - READ
+
+  database-agent-01:
+    department: database
+    status: active
+    permissions:
+      - action: READ
+        target_pattern: customer_orders_db
+      - action: READ
+        target_pattern: customers_prod
+      - action: READ
+        target_pattern: staging_db
+      - action: UPDATE
+        target_pattern: staging_db
+      - action: DELETE
+        target_pattern: staging_db
+    baseline:
+      typical_actions:
+        - READ
+
+  coding-agent-01:
+    department: coding
+    status: active
+    permissions:
+      - action: READ
+        target_pattern: sales_db
+    baseline:
+      typical_actions:
+        - READ
+
+  finance-agent-01:
+    department: finance
+    status: active
+    permissions:
+      - action: READ
+        target_pattern: payments_api
+      - action: CREATE
+        target_pattern: payments_api
+    baseline:
+      max_normal_amount: 10000
+      typical_actions:
+        - READ
+        - CREATE
+
+  devops-agent-01:
+    department: devops
+    status: active
+    permissions:
+      - action: DEPLOY
+        target_pattern: staging_cluster
+      - action: DEPLOY
+        target_pattern: prod_cluster
+    baseline:
+      typical_actions:
+        - DEPLOY

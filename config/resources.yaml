@@ -1,0 +1,48 @@
+resources:
+  customer_orders_db:
+    environment: production
+    data_class: internal
+    record_count: 2000
+    reversible: true
+
+  customers_prod:
+    environment: production
+    data_class: PII
+    record_count: 50000
+    reversible: false
+
+  payments_api:
+    environment: production
+    data_class: financial
+    record_count: 1
+    reversible: true
+
+  sales_db:
+    environment: production
+    data_class: internal
+    record_count: 1000
+    reversible: true
+
+  staging_db:
+    environment: staging
+    data_class: internal
+    record_count: 2000
+    reversible: true
+
+  prod_database:
+    environment: production
+    data_class: confidential
+    record_count: 1
+    reversible: false
+
+  prod_cluster:
+    environment: production
+    data_class: confidential
+    record_count: 1
+    reversible: true
+
+  staging_cluster:
+    environment: staging
+    data_class: public
+    record_count: 1
+    reversible: true

@@ -1,0 +1,9 @@
+limits:
+  - action: CREATE
+    target: payments_api
+    window_hours: 24
+    soft_limit: 50000
+    hard_cap: 200000
+    rapid_count: 5
+    rapid_window_seconds: 600  # 10 minutes
+    policy_ref: fin_policy_cumulative_limits

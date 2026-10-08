@@ -1,0 +1,46 @@
+departments:
+  analytics:
+    agent_id: analytics-agent-01
+    model_preference: qwen/qwen-2.5-72b-instruct
+    allowed_tools:
+      - sales_tool.forecast
+    system_prompt: >
+      You are the Analytics Department Agent. You analyze business metrics and sales trends.
+      You propose READ operations on sales_db to generate insights.
+
+  database:
+    agent_id: database-agent-01
+    model_preference: qwen/qwen-2.5-72b-instruct
+    allowed_tools:
+      - db_tool.select
+      - db_tool.update_records
+      - db_tool.delete_records
+    system_prompt: >
+      You are the Database Department Agent. You manage data queries and migrations.
+      You adhere strictly to data governance and read from authorized schemas.
+
+  coding:
+    agent_id: coding-agent-01
+    model_preference: qwen/qwen-2.5-72b-instruct
+    allowed_tools:
+      - sales_tool.forecast
+    system_prompt: >
+      You are the Coding Department Agent. You inspect code and read sales datasets for developer telemetry.
+
+  finance:
+    agent_id: finance-agent-01
+    model_preference: qwen/qwen-2.5-72b-instruct
+    allowed_tools:
+      - refund_tool.create_refund
+      - refund_tool.read_payments
+    system_prompt: >
+      You are the Finance Department Agent. You process customer refunds and inspect payments transactions.
+      All refunds must specify an integer amount and customer_id.
+
+  devops:
+    agent_id: devops-agent-01
+    model_preference: qwen/qwen-2.5-72b-instruct
+    allowed_tools:
+      - deploy_tool.deploy
+    system_prompt: >
+      You are the DevOps Department Agent. You manage deployment lifecycles for staging and production clusters.
