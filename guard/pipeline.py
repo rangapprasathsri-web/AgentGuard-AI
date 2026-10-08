@@ -13,6 +13,7 @@ from common.schemas import (
 from guard.approvals import ApprovalManager
 from guard.ledger import CumulativeLedger
 from guard.policy_version import get_policy_version
+from guard.rag import PolicyRAGEngine
 from guard.registries import AgentRegistry, ResourceRegistry
 from guard.risk import RiskEngine
 from guard.rules import HardRulesEngine
@@ -28,6 +29,7 @@ class GuardPipeline:
         risk_engine: Optional[RiskEngine] = None,
         ledger: Optional[CumulativeLedger] = None,
         approval_manager: Optional[ApprovalManager] = None,
+        rag_engine: Optional[PolicyRAGEngine] = None,
     ):
         self.service_key = service_key
         self.agent_registry = agent_registry or AgentRegistry()
@@ -36,6 +38,7 @@ class GuardPipeline:
         self.risk_engine = risk_engine or RiskEngine()
         self.ledger = ledger or CumulativeLedger()
         self.approval_manager = approval_manager or ApprovalManager()
+        self.rag_engine = rag_engine or PolicyRAGEngine()
 
     def evaluate(
         self,
@@ -83,6 +86,19 @@ class GuardPipeline:
                 amount=amount,
                 only_check=True,
             )
+
+        # RAG Policy Evidence retrieval (Section 10)
+        rag_chunks: List[str] = []
+        if rag_citations is None:
+            rag_chunks, citations, rag_status = self.rag_engine.retrieve(
+                action=request.action.value,
+                target=request.target,
+                department=agent.department if agent else "",
+                top_k=3,
+            )
+            rag_citations = citations
+        else:
+            rag_status = "success" if rag_citations else "skipped"
 
         # Step 7: Analyzer
         # Invariant I4: The LLM analyzer can never lower a score, never output ALLOW,
@@ -221,7 +237,7 @@ class GuardPipeline:
             action_hash=action_hash,
             decision_source=decision_source,
             analyzer_status=analyzer_status,
-            rag_status="success" if rag_citations else "skipped",
+            rag_status=rag_status,
             policy_version=policy_ver,
             approval_id=approval_id,
         )
