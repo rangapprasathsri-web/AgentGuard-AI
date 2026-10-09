@@ -198,6 +198,15 @@ class AnalyzerOutput(BaseModel):
         return [s[:200] for s in v][:5]
 
 
+class TenantRegisterRequest(BaseModel):
+    company: str
+    owner_email: str
+
+class TenantRegisterResponse(BaseModel):
+    tenant_id: str
+    api_key: str
+
+
 class ApprovalDecisionRequest(BaseModel):
     decision: str  # APPROVE | REJECT
     reason: Optional[str] = None

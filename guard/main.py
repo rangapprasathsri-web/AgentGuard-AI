@@ -13,6 +13,8 @@ from common.schemas import (
     ApprovalDecisionRequest,
     DecisionOutcome,
     EvaluationResponse,
+    TenantRegisterRequest,
+    TenantRegisterResponse,
 )
 from guard.approvals import ApprovalManager
 from guard.ledger import CumulativeLedger
@@ -21,6 +23,7 @@ from guard.policy_version import get_policy_version
 from guard.registries import AgentRegistry, ResourceRegistry
 from guard.risk import RiskEngine
 from guard.rules import HardRulesEngine
+from guard.tenants import TenantStore
 
 from common.secrets import get_validated_secret
 
@@ -45,6 +48,8 @@ pipeline = GuardPipeline(
     ledger=ledger,
     approval_manager=approvals_mgr,
 )
+
+tenant_store = TenantStore(db_path="tenants.db")
 
 # Initialize decisions table
 with sqlite3.connect("guard.db") as conn:
@@ -92,6 +97,12 @@ def require_role(allowed_roles: List[str], x_role: Optional[str] = Header(None))
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.post("/guard/tenants/register", response_model=TenantRegisterResponse)
+async def register_tenant(req: TenantRegisterRequest):
+    tenant_id, api_key = tenant_store.register_tenant(req.company, req.owner_email)
+    return TenantRegisterResponse(tenant_id=tenant_id, api_key=api_key)
 
 
 # -------------------------------------------------------------

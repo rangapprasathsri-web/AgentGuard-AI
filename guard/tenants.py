@@ -122,6 +122,45 @@ class TenantStore:
             conn.commit()
         return raw_key
 
+    def register_tenant(self, company: str, owner_email: str) -> Tuple[str, str]:
+        """
+        Registers a new tenant.
+        Returns (tenant_id, api_key)
+        """
+        tenant_id = f"ten_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc).isoformat()
+        
+        raw_key, key_hash, key_prefix = self.generate_api_key()
+        
+        from common.vault import encrypt_credential
+        empty_cred = encrypt_credential("")
+        
+        with self._get_connection() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "INSERT INTO tenants (id, company, owner_email, status, created_at) VALUES (?, ?, ?, 'ACTIVE', ?)",
+                    (tenant_id, company, owner_email, now)
+                )
+                conn.execute(
+                    "INSERT INTO tenant_api_keys (tenant_id, key_hash, key_prefix, created_at) VALUES (?, ?, ?, ?)",
+                    (tenant_id, key_hash, key_prefix, now)
+                )
+                conn.execute(
+                    "INSERT INTO tenant_limits (tenant_id, max_single_refund, daily_cumulative_cap, payment_review_threshold, payment_hard_block, currency) VALUES (?, 50000, 200000, 10000, 50000, 'INR')",
+                    (tenant_id,)
+                )
+                conn.execute(
+                    "INSERT INTO tenant_endpoint (tenant_id, base_url, credential_ciphertext) VALUES (?, '', ?)",
+                    (tenant_id, empty_cred)
+                )
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+            
+        return tenant_id, raw_key
+
     def verify_api_key(self, raw_key: str) -> Optional[str]:
         """Returns tenant_id if valid, None otherwise. Uses constant time compare implicitly via hash."""
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
