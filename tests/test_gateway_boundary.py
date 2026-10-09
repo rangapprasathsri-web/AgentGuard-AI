@@ -38,6 +38,7 @@ def test_scenario_10_fail_closed_guard_unreachable(test_enforcer):
             raw_body=body,
             actor="database-agent-01",
             role="agent",
+            tenant_id="demo"
         )
 
         # Invariant I2: Must fail closed with 503 denied_fail_closed
@@ -83,6 +84,7 @@ def test_defect_8_guard_timeout(test_enforcer):
                 raw_body=body,
                 actor="database-agent-01",
                 role="agent",
+                tenant_id="demo"
             )
             
             assert status_code == 503
@@ -150,6 +152,7 @@ def test_scenario_14_role_abuse_actor_mismatch(test_enforcer):
             raw_body=body,
             actor="different-agent-99",
             role="agent",
+            tenant_id="demo"
         )
         assert code == 403
         assert resp["error"] == "forbidden_role_or_actor_mismatch"
@@ -159,6 +162,7 @@ def test_scenario_14_role_abuse_actor_mismatch(test_enforcer):
             raw_body=body,
             actor="database-agent-01",
             role="approver",
+            tenant_id="demo"
         )
         assert code2 == 403
         assert resp2["error"] == "forbidden_role_or_actor_mismatch"

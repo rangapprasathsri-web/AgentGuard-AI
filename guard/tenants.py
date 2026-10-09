@@ -201,6 +201,17 @@ class TenantStore:
             conn.commit()
         return token
 
+    def get_tenant_endpoint(self, tenant_id: str) -> Optional[Dict[str, str]]:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT base_url, credential_ciphertext FROM tenant_endpoint WHERE tenant_id = ?",
+                (tenant_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
     def verify_approver_token(self, tenant_id: str, token: str) -> Optional[Dict[str, str]]:
         """Verifies the token and returns approver info dict if valid."""
         token_hash = hashlib.sha256(token.encode()).hexdigest()

@@ -66,6 +66,7 @@ async def execute_action(
         raw_body=body,
         actor=x_actor,
         role=x_role,
+        tenant_id=tenant_id,
     )
 
     if status_code != 200 and status_code != 202:

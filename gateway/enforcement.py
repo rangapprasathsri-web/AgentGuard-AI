@@ -25,6 +25,7 @@ class GatewayEnforcer:
         raw_body: Dict[str, Any],
         actor: Optional[str],
         role: Optional[str],
+        tenant_id: str,
     ) -> Tuple[int, Dict[str, Any]]:
         """
         Executes Gateway authorization flow (Section 7).
@@ -80,6 +81,7 @@ class GatewayEnforcer:
 
         # Verify action_hash in Guard response equals Gateway's computed hash
         resp_hash = guard_resp.get("action_hash")
+        print("DEBUG HASHES:", resp_hash, computed_hash)
         if resp_hash != computed_hash:
             self.audit_logger.append_event(
                 event_type="security_signal",
@@ -94,55 +96,92 @@ class GatewayEnforcer:
         # Case A: ALLOW / authorized -> Execute tool
         if decision == "ALLOW" or auth_status == "authorized":
             decision_id = guard_resp.get("decision_id")
-            tool_handler = get_tool_handler(req.action.value, req.target)
-            if not tool_handler:
-                self.audit_logger.append_event(
-                    event_type="security_signal",
-                    payload={"signal": "no_tool_mapping", "decision_id": decision_id},
-                    decision_id=decision_id,
-                )
-                await self.guard_client.confirm(decision_id, "failed")
-                return 400, {
-                    "status": "blocked",
-                    "decision_id": decision_id,
-                    "reasons": ["no_tool_mapping"],
-                }
-
-            try:
-                # Call mock tool with TOOL_CREDENTIAL and idempotency_key = decision_id
-                result = tool_handler(
-                    cred=self.tool_credential,
-                    params=req.params,
-                    idemp=decision_id,
-                )
-                # Confirm success to Guard
-                await self.guard_client.confirm(decision_id, "executed")
-                # Append executed audit event
-                self.audit_logger.append_event(
-                    event_type="executed",
-                    payload={
+            
+            from guard.tenants import TenantStore
+            from common.vault import decrypt_credential
+            import httpx
+            
+            tenant_store = TenantStore()
+            endpoint = tenant_store.get_tenant_endpoint(tenant_id)
+            
+            if not endpoint or not endpoint.get("base_url"):
+                # Fallback to local mock tool if no endpoint registered
+                tool_handler = get_tool_handler(req.action.value, req.target)
+                if not tool_handler:
+                    self.audit_logger.append_event(
+                        event_type="security_signal",
+                        payload={"signal": "no_tool_mapping", "decision_id": decision_id},
+                        decision_id=decision_id,
+                    )
+                    await self.guard_client.confirm(decision_id, "failed")
+                    return 400, {
+                        "status": "blocked",
                         "decision_id": decision_id,
-                        "agent_id": req.agent_id,
-                        "action": req.action.value,
-                        "target": req.target,
-                        "action_hash": computed_hash,
-                        "status": "executed",
-                    },
-                    decision_id=decision_id,
-                )
-                return 200, {
-                    "status": "executed",
+                        "reasons": ["no_tool_mapping"],
+                    }
+
+                try:
+                    result = tool_handler(
+                        cred=self.tool_credential,
+                        params=req.params,
+                        idemp=decision_id,
+                    )
+                except Exception as e:
+                    self.audit_logger.append_event(
+                        event_type="security_signal",
+                        payload={"signal": "execution_failed", "error": str(e), "decision_id": decision_id},
+                    )
+                    await self.guard_client.confirm(decision_id, "failed")
+                    return 500, {"status": "execution_failed", "error": "Internal execution error"}
+            else:
+                try:
+                    decrypted_cred = decrypt_credential(endpoint["credential_ciphertext"])
+                    async with httpx.AsyncClient() as client:
+                        ext_resp = await client.post(
+                            endpoint["base_url"],
+                            json={
+                                "action": req.action.value,
+                                "target": req.target,
+                                "params": req.params,
+                                "idempotency_key": decision_id
+                            },
+                            headers={"Authorization": f"Bearer {decrypted_cred}"},
+                            timeout=5.0,
+                            follow_redirects=False,
+                        )
+                        ext_resp.raise_for_status()
+                        if len(ext_resp.content) > 1024 * 1024:
+                            raise ValueError("Response too large")
+                        result = ext_resp.json()
+                except Exception as e:
+                    self.audit_logger.append_event(
+                        event_type="security_signal",
+                        payload={"signal": "tenant_endpoint_down", "error": str(e), "decision_id": decision_id},
+                    )
+                    await self.guard_client.confirm(decision_id, "failed")
+                    return 502, {"status": "execution_failed", "error": "Tenant endpoint down"}
+
+            # Confirm success to Guard
+            await self.guard_client.confirm(decision_id, "executed")
+            # Append executed audit event
+            self.audit_logger.append_event(
+                event_type="executed",
+                payload={
                     "decision_id": decision_id,
-                    "result": result,
+                    "agent_id": req.agent_id,
+                    "action": req.action.value,
+                    "target": req.target,
                     "action_hash": computed_hash,
-                }
-            except Exception as e:
-                self.audit_logger.append_event(
-                    event_type="security_signal",
-                    payload={"signal": "execution_failed", "error": str(e), "decision_id": decision_id},
-                )
-                await self.guard_client.confirm(decision_id, "failed")
-                return 500, {"status": "execution_failed", "error": "Internal execution error"}
+                    "status": "executed",
+                },
+                decision_id=decision_id,
+            )
+            return 200, {
+                "status": "executed",
+                "decision_id": decision_id,
+                "result": result,
+                "action_hash": computed_hash,
+            }
 
         # Case B: REVIEW -> pending approval
         elif decision == "REVIEW":

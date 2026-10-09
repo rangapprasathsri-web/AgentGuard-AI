@@ -113,7 +113,8 @@ def test_bad_guard_signature_denial(tmp_path):
         status, body = asyncio.run(enforcer.execute_action(
             {"agent_id": "agent1", "action": "READ", "target": "t1", "params": {}, "source": {"type": "user"}},
             actor="agent1",
-            role="agent"
+            role="agent",
+            tenant_id="demo"
         ))
         assert status == 503
         assert body["reason"] == "bad_signature"
