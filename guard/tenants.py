@@ -173,3 +173,14 @@ class TenantStore:
             if row:
                 return row["tenant_id"]
         return None
+
+    def get_tenant_limits(self, tenant_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM tenant_limits WHERE tenant_id = ?",
+                (tenant_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None

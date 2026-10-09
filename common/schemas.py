@@ -13,6 +13,7 @@ class ActionType(str, Enum):
     TRANSFER = "TRANSFER"
     DEPLOY = "DEPLOY"
     CHANGE_PERMISSION = "CHANGE_PERMISSION"
+    REFUND = "REFUND"
 
 
 class SourceType(str, Enum):
@@ -118,7 +119,7 @@ class ActionRequest(BaseModel):
         if not isinstance(data, dict):
             return data
         
-        known_fields = {"agent_id", "action", "target", "params", "source", "approval_id", "unverified_claims"}
+        known_fields = {"tenant_id", "agent_id", "action", "target", "params", "source", "approval_id", "unverified_claims"}
         unknown = {k: v for k, v in data.items() if k not in known_fields}
         
         # Merge or capture unverified claims

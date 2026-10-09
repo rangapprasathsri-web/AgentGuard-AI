@@ -234,6 +234,7 @@ class GuardPipeline:
             final_risk_level = "HIGH"
 
         resp = EvaluationResponse(
+            tenant_id=request.tenant_id,
             decision_id=decision_id,
             decision=final_decision,
             risk_score=adjusted_score,

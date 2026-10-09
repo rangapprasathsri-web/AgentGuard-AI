@@ -4,12 +4,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from common.clock import clock
 from common.schemas import DecisionOutcome
-
+from guard.tenants import TenantStore
 
 class CumulativeLedger:
-    def __init__(self, db_path: str = "guard.db", limits_path: str = "policies/limits.yaml"):
+    def __init__(self, db_path: str = "guard.db", limits_path: str = "policies/limits.yaml", tenant_store: Optional[TenantStore] = None):
         self.db_path = db_path
         self.limits_path = limits_path
+        self.tenant_store = tenant_store or TenantStore()
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -52,6 +53,12 @@ class CumulativeLedger:
             except sqlite3.OperationalError:
                 pass # Column already exists
                 
+            # Migration: add request_hash if missing
+            try:
+                conn.execute("ALTER TABLE cumulative_ledger ADD COLUMN request_hash TEXT")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+                
             conn.commit()
 
     def check_and_reserve(
@@ -79,23 +86,38 @@ class CumulativeLedger:
         window_hours = 24
         
         try:
-            if not os.path.exists(self.limits_path):
-                return DecisionOutcome.BLOCK, "limits_config_missing", amount, 0
-            with open(self.limits_path, "r") as f:
-                limits_data = yaml.safe_load(f)
-                if not limits_data or "limits" not in limits_data:
-                    return DecisionOutcome.BLOCK, "limits_config_invalid", amount, 0
-                limits_list = limits_data["limits"]
-                matched_limit = next((l for l in limits_list if l.get("action") == action and l.get("target") == target), None)
-                
-                if matched_limit:
-                    soft_limit = matched_limit.get("soft_limit", soft_limit)
-                    hard_cap = matched_limit.get("hard_cap", hard_cap)
-                    rapid_count = matched_limit.get("rapid_count", rapid_count)
-                    rapid_window_seconds = matched_limit.get("rapid_window_seconds", rapid_window_seconds)
-                    window_hours = matched_limit.get("window_hours", window_hours)
+            if tenant_id != "demo":
+                t_limits = self.tenant_store.get_tenant_limits(tenant_id)
+                if not t_limits:
+                    return DecisionOutcome.BLOCK, "limits_config_missing", amount, 0
+                if action == "CREATE" and target == "payments_api":
+                    if amount > t_limits["max_single_refund"] or amount > t_limits["payment_hard_block"]:
+                        return DecisionOutcome.BLOCK, f"amount {amount} exceeds single limit", amount, 0
+                    soft_limit = t_limits["payment_review_threshold"]
+                    hard_cap = t_limits["daily_cumulative_cap"]
                 else:
                     return DecisionOutcome.BLOCK, "no_limit_defined", amount, 0
+                rapid_count = 5
+                rapid_window_seconds = 600
+                window_hours = 24
+            else:
+                if not os.path.exists(self.limits_path):
+                    return DecisionOutcome.BLOCK, "limits_config_missing", amount, 0
+                with open(self.limits_path, "r") as f:
+                    limits_data = yaml.safe_load(f)
+                    if not limits_data or "limits" not in limits_data:
+                        return DecisionOutcome.BLOCK, "limits_config_invalid", amount, 0
+                    limits_list = limits_data["limits"]
+                    matched_limit = next((l for l in limits_list if l.get("action") == action and l.get("target") == target), None)
+                    
+                    if matched_limit:
+                        soft_limit = matched_limit.get("soft_limit", soft_limit)
+                        hard_cap = matched_limit.get("hard_cap", hard_cap)
+                        rapid_count = matched_limit.get("rapid_count", rapid_count)
+                        rapid_window_seconds = matched_limit.get("rapid_window_seconds", rapid_window_seconds)
+                        window_hours = matched_limit.get("window_hours", window_hours)
+                    else:
+                        return DecisionOutcome.BLOCK, "no_limit_defined", amount, 0
         except Exception:
             return DecisionOutcome.BLOCK, "limits_config_unparsable", amount, 0
 
