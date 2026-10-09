@@ -206,6 +206,8 @@ class TenantRegisterRequest(BaseModel):
 class TenantRegisterResponse(BaseModel):
     tenant_id: str
     api_key: str
+    approver_token: str
+    gateway_url: str
 
 
 class ApprovalDecisionRequest(BaseModel):

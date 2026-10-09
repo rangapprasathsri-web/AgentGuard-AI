@@ -102,7 +102,14 @@ async def health_check():
 @app.post("/guard/tenants/register", response_model=TenantRegisterResponse)
 async def register_tenant(req: TenantRegisterRequest):
     tenant_id, api_key = tenant_store.register_tenant(req.company, req.owner_email)
-    return TenantRegisterResponse(tenant_id=tenant_id, api_key=api_key)
+    approver_token = tenant_store.register_approver(tenant_id, "Default Approver", "approver")
+    gateway_url = "http://localhost:8002"
+    return TenantRegisterResponse(
+        tenant_id=tenant_id,
+        api_key=api_key,
+        approver_token=approver_token,
+        gateway_url=gateway_url
+    )
 
 
 # -------------------------------------------------------------
@@ -246,26 +253,39 @@ async def get_approval(id: str, x_role: Optional[str] = Header(None)):
 async def decide_approval(
     id: str,
     body: ApprovalDecisionRequest,
-    x_role: Optional[str] = Header(None),
-    x_actor: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
 ):
-    # Role check: Approver ONLY. Admin and agent get 403 (Section 11, 13)
-    if x_role != "approver":
+    if not authorization or not authorization.startswith("Bearer "):
         audit_logger.append_event(
             event_type="security_signal",
             payload={
                 "signal": "unauthorized_approve_attempt",
-                "attempted_role": x_role,
-                "actor": x_actor,
                 "approval_id": id,
             },
         )
-        raise HTTPException(status_code=403, detail="Decisions require approver role")
+        raise HTTPException(status_code=401, detail="Decisions require approver token")
+
+    token = authorization[7:]
+
+    appr = approvals_mgr.get_approval(id)
+    if not appr:
+        raise HTTPException(status_code=404, detail="Approval not found")
+
+    tenant_id = appr.get("tenant_id", "demo")
+    approver_info = tenant_store.verify_approver_token(tenant_id, token)
+    if not approver_info:
+        audit_logger.append_event(
+            event_type="security_signal",
+            payload={"signal": "invalid_approver_token", "approval_id": id}
+        )
+        raise HTTPException(status_code=403, detail="Invalid approver token")
+
+    actual_approver = approver_info["name"]
 
     ok, err = approvals_mgr.decide(
         approval_id=id,
         decision=body.decision,
-        approver=x_actor or "unknown_approver",
+        approver=actual_approver,
         reason=body.reason,
     )
     if not ok:
@@ -277,7 +297,7 @@ async def decide_approval(
         payload={
             "approval_id": id,
             "decision": body.decision,
-            "approver": x_actor,
+            "approver": actual_approver,
             "reason": body.reason,
         },
     )

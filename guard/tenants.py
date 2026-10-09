@@ -184,3 +184,32 @@ class TenantStore:
             if row:
                 return dict(row)
         return None
+
+    def register_approver(self, tenant_id: str, name: str, role: str) -> str:
+        """Registers an approver and returns a plain-text token (OTP)."""
+        import uuid
+        approver_id = f"appr_user_{uuid.uuid4().hex[:8]}"
+        token = secrets.token_hex(16)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        now = datetime.now(timezone.utc).isoformat()
+        
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT INTO approvers (id, tenant_id, name, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (approver_id, tenant_id, name, role, token_hash, now)
+            )
+            conn.commit()
+        return token
+
+    def verify_approver_token(self, tenant_id: str, token: str) -> Optional[Dict[str, str]]:
+        """Verifies the token and returns approver info dict if valid."""
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, name, role FROM approvers WHERE tenant_id = ? AND token_hash = ?",
+                (tenant_id, token_hash)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
