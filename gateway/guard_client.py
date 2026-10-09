@@ -12,7 +12,9 @@ class GuardClient:
         timeout: float = 10.0,
     ):
         self.guard_url = guard_url or os.getenv("GUARD_URL", "http://localhost:8001")
-        self.service_key = service_key or os.getenv("SERVICE_KEY", "default_service_key")
+        self.service_key = service_key or os.getenv("SERVICE_KEY")
+        if not self.service_key:
+            raise RuntimeError("SERVICE_KEY missing")
         self.timeout = timeout
 
     async def evaluate(

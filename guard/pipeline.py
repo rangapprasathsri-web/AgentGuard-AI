@@ -22,7 +22,7 @@ from guard.rules import HardRulesEngine
 class GuardPipeline:
     def __init__(
         self,
-        service_key: str = "default_service_key",
+        service_key: str,
         agent_registry: Optional[AgentRegistry] = None,
         resource_registry: Optional[ResourceRegistry] = None,
         rules_engine: Optional[HardRulesEngine] = None,
@@ -77,15 +77,7 @@ class GuardPipeline:
         cum_decision = DecisionOutcome.ALLOW
         cum_reason = "within_limits"
         if amount > 0:
-            # Evaluate cumulative gate (check only, reservation created upon final ALLOW/authorized)
-            cum_decision, cum_reason, _, _ = self.ledger.check_and_reserve(
-                reservation_id=decision_id,
-                agent_id=request.agent_id,
-                action=request.action.value,
-                target=request.target,
-                amount=amount,
-                only_check=True,
-            )
+            pass # Cumulative gate checked at the end in final ALLOW path
 
         # RAG Policy Evidence retrieval (Section 10)
         rag_chunks: List[str] = []
@@ -180,6 +172,21 @@ class GuardPipeline:
 
         # Step 9: Handle outcomes (Approvals / Reservations)
         approval_id: Optional[str] = None
+        
+        if final_decision == DecisionOutcome.ALLOW and amount > 0:
+            cum_decision, cum_reason, _, _ = self.ledger.check_and_reserve(
+                reservation_id=decision_id,
+                agent_id=request.agent_id,
+                action=request.action.value,
+                target=request.target,
+                amount=amount,
+                only_check=False,
+            )
+            if cum_decision != DecisionOutcome.ALLOW:
+                final_decision = cum_decision
+                decision_source = "cumulative_gate"
+                factors.append(cum_reason)
+
         if final_decision == DecisionOutcome.REVIEW:
             # Check for approval flood or duplicate
             appr_id, signal = self.approval_manager.create_approval(
@@ -205,17 +212,6 @@ class GuardPipeline:
             else:
                 approval_id = appr_id
 
-        elif final_decision == DecisionOutcome.ALLOW:
-            # Create active reservation for ALLOW outcome if amount > 0
-            if amount > 0:
-                self.ledger.check_and_reserve(
-                    reservation_id=decision_id,
-                    agent_id=request.agent_id,
-                    action=request.action.value,
-                    target=request.target,
-                    amount=amount,
-                    only_check=False,
-                )
 
         # Risk level string
         if adjusted_score < 40:
@@ -276,6 +272,11 @@ class GuardPipeline:
 
             # Lazy expiry check
             appr = self.approval_manager._evaluate_expiry(row, conn)
+
+            # verify approval.agent_id == request.agent_id BEFORE any voiding
+            if appr["agent_id"] != request.agent_id:
+                conn.rollback()
+                return DecisionOutcome.BLOCK, "agent_id_mismatch", None, None
 
             # a) Hash mismatch check (checked first)
             if appr["action_hash"] != action_hash:

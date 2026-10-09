@@ -145,11 +145,13 @@ class ActionRequest(BaseModel):
         if "amount" in params:
             params["amount"] = validate_strict_int(params["amount"], "amount")
 
-        # Refunds require params.customer_id
+        # Refunds require params.customer_id and amount > 0
         target = data_clean.get("target")
         if target == "payments_api" and action in [ActionType.CREATE, "CREATE"]:
             if not params.get("customer_id"):
                 raise ValueError("payments_api CREATE requests require params.customer_id")
+            if "amount" not in params or params["amount"] <= 0:
+                raise ValueError("payments_api CREATE requests require params.amount > 0")
 
         data_clean["params"] = params
         return data_clean

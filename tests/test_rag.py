@@ -28,7 +28,7 @@ def test_rag_advisory_failure_resilience():
     assert len(chunks) == 0
 
     # Ensure GuardPipeline functions smoothly even if RAG is broken
-    pipeline = GuardPipeline(rag_engine=broken_engine)
+    pipeline = GuardPipeline(service_key="test_svc", rag_engine=broken_engine)
     req = ActionRequest(
         agent_id="analytics-agent-01",
         action=ActionType.READ,

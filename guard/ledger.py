@@ -52,15 +52,35 @@ class CumulativeLedger:
         action: str,
         target: str,
         amount: int,
-        soft_limit: int = 50000,
-        hard_cap: int = 200000,
-        rapid_count: int = 5,
-        rapid_window_seconds: int = 600,
-        window_hours: int = 24,
         only_check: bool = False,
         conn: Optional[sqlite3.Connection] = None,
         bypass_soft_limit: bool = False,
     ) -> Tuple[DecisionOutcome, str, int, int]:
+        import yaml
+        soft_limit = 50000
+        hard_cap = 200000
+        rapid_count = 5
+        rapid_window_seconds = 600
+        window_hours = 24
+        
+        if not os.path.exists(self.limits_path):
+            raise RuntimeError(f"Missing limits file: {self.limits_path}")
+            
+        with open(self.limits_path, "r") as f:
+            limits_data = yaml.safe_load(f)
+            if not limits_data or "limits" not in limits_data:
+                raise RuntimeError(f"Invalid limits file: {self.limits_path}")
+            
+            # Since limits is a list of dictionaries, we must find the matching action/target
+            limits_list = limits_data["limits"]
+            matched_limit = next((l for l in limits_list if l.get("action") == action and l.get("target") == target), None)
+            
+            if matched_limit:
+                soft_limit = matched_limit.get("soft_limit", soft_limit)
+                hard_cap = matched_limit.get("hard_cap", hard_cap)
+                rapid_count = matched_limit.get("rapid_count", rapid_count)
+                rapid_window_seconds = matched_limit.get("rapid_window", rapid_window_seconds)
+
         """
         Runs cumulative gate evaluation atomically.
         If conn is provided, executes within the caller's transaction.

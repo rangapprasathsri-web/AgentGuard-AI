@@ -7,6 +7,7 @@ from common.llm_client import LLMClient, MockLLM
 from common.schemas import ActionRequest, ActionType, DecisionOutcome, Source, SourceType
 from guard.analyzer import ConsequenceAnalyzer
 from guard.pipeline import GuardPipeline
+from guard.ledger import CumulativeLedger
 
 
 @pytest.fixture(autouse=True)
@@ -77,8 +78,8 @@ def test_context_limiter_overflow():
     assert packed is None
 
 
-def test_hostile_analyzer_clamping_and_one_way_rule():
-    pipeline = GuardPipeline(service_key="test_key")
+def test_hostile_analyzer_clamping_and_one_way_rule(tmp_path):
+    pipeline = GuardPipeline(service_key="test_key", ledger=CumulativeLedger(db_path=str(tmp_path / "test.db")))
 
     req = ActionRequest(
         agent_id="finance-agent-01",

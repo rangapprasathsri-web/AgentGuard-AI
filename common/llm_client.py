@@ -62,7 +62,7 @@ class MockLLM:
 
 
 class LLMProviderConfig:
-    def __init__(self, name: str, base_url: str, api_key: str, model: str = "qwen/qwen-2.5-72b-instruct"):
+    def __init__(self, name: str, base_url: str, api_key: str, model: str):
         self.name = name
         self.base_url = base_url
         self.api_key = api_key
@@ -84,7 +84,9 @@ class LLMClient:
         """Loads primary provider and failover providers from environment."""
         providers = []
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        default_model = os.getenv("LLM_MODEL", "qwen/qwen-2.5-72b-instruct")
+        default_model = os.getenv("LLM_MODEL")
+        if not default_model:
+            raise RuntimeError("LLM_MODEL not configured")
 
         primary_key = os.getenv("OPENROUTER_API_KEY")
         if primary_key:
@@ -146,73 +148,90 @@ class LLMClient:
         if not self.providers:
             raise RuntimeError("No LLM providers configured in live mode")
 
-        for provider in self.providers:
-            try:
-                model_name = model_override or provider.model
-                headers = {
-                    "Authorization": f"Bearer {provider.api_key}",
-                    "Content-Type": "application/json",
-                }
-                messages = [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_prompt},
-                ]
-                payload = {
-                    "model": model_name,
-                    "messages": messages,
-                    "temperature": 0.1,
-                }
+        # Proposer gets 20s timeout, analyzer gets 8s timeout
+        is_analyzer = "analyzer" in system.lower()
+        request_timeout = 8.0 if is_analyzer else 20.0
+        total_deadline = 4.0 if is_analyzer else None
 
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.post(
-                        f"{provider.base_url}/chat/completions",
-                        json=payload,
-                        headers=headers,
-                    )
+        import asyncio
+        
+        async def _run_failover():
+            for provider in self.providers:
+                try:
+                    model_name = model_override or provider.model
+                    headers = {
+                        "Authorization": f"Bearer {provider.api_key}",
+                        "Content-Type": "application/json",
+                    }
+                    messages = [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                    payload = {
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": 0.1,
+                    }
 
-                    if resp.status_code == 429 or resp.status_code >= 500:
-                        # Failover to next provider
-                        continue
-
-                    if resp.status_code != 200:
-                        continue
-
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    cleaned = self._strip_fences(content)
-
-                    # Validate with JSON and Schema
-                    try:
-                        parsed = json.loads(cleaned)
-                    except json.JSONDecodeError:
-                        # Retry once with explicit json fix instruction
-                        fix_payload = {
-                            "model": model_name,
-                            "messages": messages + [
-                                {"role": "assistant", "content": content},
-                                {"role": "user", "content": "Your response was not valid JSON. Return ONLY the raw JSON object, no commentary, no markdown."},
-                            ],
-                            "temperature": 0.1,
-                        }
-                        retry_resp = await client.post(
+                    async with httpx.AsyncClient(timeout=request_timeout) as client:
+                        resp = await client.post(
                             f"{provider.base_url}/chat/completions",
-                            json=fix_payload,
+                            json=payload,
                             headers=headers,
                         )
-                        if retry_resp.status_code == 200:
-                            retry_content = retry_resp.json()["choices"][0]["message"]["content"]
-                            parsed = json.loads(self._strip_fences(retry_content))
-                        else:
+
+                        if resp.status_code == 429 or resp.status_code >= 500:
+                            # Failover to next provider
                             continue
 
-                    if schema_model:
-                        validated = schema_model.model_validate(parsed).model_dump()
-                        return validated, provider.name, prompt_hash
-                    return parsed, provider.name, prompt_hash
+                        if resp.status_code != 200:
+                            continue
 
-            except (httpx.TimeoutException, httpx.NetworkError, Exception):
-                # Failover to next provider in listed order
-                continue
+                        data = resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        cleaned = self._strip_fences(content)
 
-        # All providers failed
-        return None, "all_providers_failed", prompt_hash
+                        # Validate with JSON and Schema
+                        try:
+                            parsed = json.loads(cleaned)
+                        except json.JSONDecodeError:
+                            # Retry once with explicit json fix instruction
+                            fix_payload = {
+                                "model": model_name,
+                                "messages": messages + [
+                                    {"role": "assistant", "content": content},
+                                    {"role": "user", "content": "Your response was not valid JSON. Return ONLY the raw JSON object, no commentary, no markdown."},
+                                ],
+                                "temperature": 0.1,
+                            }
+                            retry_resp = await client.post(
+                                f"{provider.base_url}/chat/completions",
+                                json=fix_payload,
+                                headers=headers,
+                            )
+                            if retry_resp.status_code == 200:
+                                retry_content = retry_resp.json()["choices"][0]["message"]["content"]
+                                parsed = json.loads(self._strip_fences(retry_content))
+                            else:
+                                continue
+
+                        if schema_model:
+                            validated = schema_model.model_validate(parsed).model_dump()
+                            return validated, provider.name, prompt_hash
+                        return parsed, provider.name, prompt_hash
+
+                except (httpx.TimeoutException, httpx.NetworkError, Exception):
+                    # Failover to next provider in listed order
+                    continue
+
+            # All providers failed
+            return None, "all_providers_failed", prompt_hash
+
+        if total_deadline:
+            try:
+                async with asyncio.timeout(total_deadline):
+                    return await _run_failover()
+            except asyncio.TimeoutError:
+                return None, "timeout_exceeded", prompt_hash
+        else:
+            return await _run_failover()

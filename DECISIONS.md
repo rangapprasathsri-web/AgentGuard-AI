@@ -31,11 +31,7 @@ This document records all decisions made where requirements were ambiguous, cont
 - **Context**: Invariants I10 and Section 8, Step 6 specify cumulative gate sliding 24-hour window per `(agent_id, action, target)`.
 - **Decision**: Implemented using explicit transactions with `BEGIN IMMEDIATE` in SQLite ledger. An active reservation expires in 60s if unconfirmed, and `/guard/confirm` transitions status to executed or releases it on failure.
 
-### Decision 6: Irreversible Risk Factor Applicability
-- **Context**: In Scenario 9, `database-agent READ customers_prod` scores 35 (5 + 10 + 20), despite `customers_prod` having `reversible: false`.
-- **Decision**: `READ` is an inherently non-destructive operation. The `irreversible +15` risk factor only applies when an action performs a state mutation (`CREATE`, `UPDATE`, `DELETE`, `TRANSFER`, `DEPLOY`, `CHANGE_PERMISSION`) on an irreversible resource.
-
-### Decision 7: Makefile and Portable CLI Wrapper
+### Decision 6: Makefile and Portable CLI Wrapper
 - **Context**: Host system environment does not have GNU `make` installed in system PATH.
 - **Decision**: Provided standard POSIX `Makefile` as required, and also created an executable `./make` runner that supports `./make seed`, `./make test`, and `./make demo`.
 

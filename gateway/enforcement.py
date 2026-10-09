@@ -16,9 +16,9 @@ class GatewayEnforcer:
     ):
         self.guard_client = guard_client or GuardClient()
         self.audit_logger = audit_logger or AuditLogger()
-        self.tool_credential = tool_credential or os.getenv(
-            "TOOL_CREDENTIAL", "default_tool_credential"
-        )
+        self.tool_credential = tool_credential or os.getenv("TOOL_CREDENTIAL")
+        if not self.tool_credential:
+            raise RuntimeError("TOOL_CREDENTIAL missing")
 
     async def execute_action(
         self,

@@ -18,7 +18,7 @@ def setup_clock():
 def test_scenario_4_external_content_injection_defense():
     agent_reg = AgentRegistry()
     res_reg = ResourceRegistry()
-    pipeline = GuardPipeline(agent_registry=agent_reg, resource_registry=res_reg)
+    pipeline = GuardPipeline(service_key="test_svc", agent_registry=agent_reg, resource_registry=res_reg)
 
     # 4(a) devops DELETE prod_database with source external_content -> BLOCK, matches include INJ-002
     req_a = ActionRequest(
@@ -59,7 +59,7 @@ def test_scenario_4_external_content_injection_defense():
 
 def test_scenario_15_admin_kill_switch():
     agent_reg = AgentRegistry()
-    pipeline = GuardPipeline(agent_registry=agent_reg)
+    pipeline = GuardPipeline(service_key="test_svc", agent_registry=agent_reg)
 
     req = ActionRequest(
         agent_id="database-agent-01",

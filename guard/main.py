@@ -26,9 +26,7 @@ from guard.rules import HardRulesEngine
 SERVICE_KEY = os.getenv("SERVICE_KEY")
 AUDIT_HMAC_KEY = os.getenv("AUDIT_HMAC_KEY")
 if not SERVICE_KEY or not AUDIT_HMAC_KEY:
-    # In tests or local dev, ensure fallback or fail closed
-    if os.getenv("ALLOW_INSECURE_DEV", "false").lower() != "true" and not os.path.exists(".env.guard"):
-        raise RuntimeError("Startup failed: required secrets missing (fail closed)")
+    raise RuntimeError("Startup failed: required secrets missing (fail closed)")
 
 # Load components
 agent_reg = AgentRegistry()
@@ -37,9 +35,9 @@ rules_engine = HardRulesEngine()
 risk_engine = RiskEngine()
 ledger = CumulativeLedger(db_path="guard.db")
 approvals_mgr = ApprovalManager(db_path="guard.db")
-audit_logger = AuditLogger(db_path="audit.db", hmac_key=AUDIT_HMAC_KEY or "default_key")
+audit_logger = AuditLogger(db_path="audit.db", hmac_key=AUDIT_HMAC_KEY)
 pipeline = GuardPipeline(
-    service_key=SERVICE_KEY or "default_service_key",
+    service_key=SERVICE_KEY,
     agent_registry=agent_reg,
     resource_registry=res_reg,
     rules_engine=rules_engine,
@@ -81,7 +79,7 @@ app.add_middleware(
 
 
 def verify_service_key(x_service_key: Optional[str] = Header(None)) -> None:
-    if not x_service_key or x_service_key != (SERVICE_KEY or "default_service_key"):
+    if not x_service_key or x_service_key != SERVICE_KEY:
         raise HTTPException(status_code=403, detail="unauthorized_service_key")
 
 
@@ -352,9 +350,10 @@ async def verify_audit_chain(x_role: Optional[str] = Header(None)):
 # DEMO_MODE endpoints (Section 12, 13)
 # -------------------------------------------------------------
 @app.post("/audit/demo/tamper")
-async def audit_demo_tamper():
+async def audit_demo_tamper(x_role: Optional[str] = Header(None)):
     if os.getenv("DEMO_MODE", "false").lower() != "true":
         raise HTTPException(status_code=404, detail="Endpoint only available in DEMO_MODE")
+    require_role(["admin"], x_role)
     try:
         res = audit_logger.demo_tamper()
         return res
@@ -363,9 +362,10 @@ async def audit_demo_tamper():
 
 
 @app.post("/demo/reset")
-async def demo_reset():
+async def demo_reset(x_role: Optional[str] = Header(None)):
     if os.getenv("DEMO_MODE", "false").lower() != "true":
         raise HTTPException(status_code=404, detail="Endpoint only available in DEMO_MODE")
+    require_role(["admin"], x_role)
     # Restore any tampered row
     audit_logger.demo_restore_tamper()
     # Reset approvals, ledger, decisions
@@ -383,8 +383,9 @@ async def demo_reset():
 
 
 @app.post("/demo/clock")
-async def demo_clock_adjust(offset_seconds: float = Query(...)):
+async def demo_clock_adjust(offset_seconds: float = Query(...), x_role: Optional[str] = Header(None)):
     if os.getenv("DEMO_MODE", "false").lower() != "true":
         raise HTTPException(status_code=404, detail="Endpoint only available in DEMO_MODE")
+    require_role(["admin"], x_role)
     clock.set_offset(offset_seconds)
     return {"status": "offset_applied", "current_time": clock.now_iso()}

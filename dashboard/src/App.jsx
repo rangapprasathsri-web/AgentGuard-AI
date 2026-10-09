@@ -3,8 +3,18 @@ import {
   Shield, AlertTriangle, CheckCircle, XCircle, Clock, 
   Terminal, Database, Lock, RefreshCw, FileText, UserCheck, 
   Layers, ChevronRight, AlertOctagon, Cpu, Hash, Play,
-  Search, ShieldAlert, Check, X, Eye, ExternalLink, Power
+  Search, ShieldAlert, Check, X, Eye, ExternalLink, Power, Info
 } from 'lucide-react';
+
+const InfoTooltip = ({ text }) => (
+  <div className="relative group inline-flex items-center ml-1.5 cursor-help z-50 align-middle">
+    <Info className="w-3.5 h-3.5 text-slate-500 hover:text-emerald-400 transition-colors" />
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-800 text-xs text-slate-200 rounded-lg shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none border border-slate-600 whitespace-normal text-left font-normal z-[100] leading-relaxed">
+      {text}
+      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+    </div>
+  </div>
+);
 
 const GUARD_API = 'http://localhost:8001';
 const GATEWAY_API = 'http://localhost:8002';
@@ -58,30 +68,38 @@ export default function App() {
       // 1. Fetch decisions
       const decRes = await fetch(`${GUARD_API}/decisions`, { headers });
       if (decRes.ok) setDecisions(await decRes.json());
+      else setDecisions([]);
 
       // 2. Fetch approvals
       const appRes = await fetch(`${GUARD_API}/approvals`, { headers });
       if (appRes.ok) setApprovals(await appRes.json());
+      else setApprovals([]);
 
       // 3. Fetch audit log
       const audRes = await fetch(`${GUARD_API}/audit?limit=50`, { headers });
       if (audRes.ok) setAuditEvents(await audRes.json());
+      else setAuditEvents([]);
 
       // 4. Fetch audit verification
       const verRes = await fetch(`${GUARD_API}/audit/verify`, { headers });
       if (verRes.ok) setAuditVerify(await verRes.json());
+      else setAuditVerify({ valid: false, reason: "Access Denied", records_checked: 0, head_hash: "N/A" });
 
       // 5. Fetch agents and resources
       const agRes = await fetch(`${GUARD_API}/agents`, { headers });
       if (agRes.ok) setAgents(await agRes.json());
+      else setAgents({});
 
       const resRes = await fetch(`${GUARD_API}/resources`, { headers });
       if (resRes.ok) setResources(await resRes.json());
+      else setResources({});
 
       const polRes = await fetch(`${GUARD_API}/policy/version`, { headers });
       if (polRes.ok) {
         const d = await polRes.json();
         setPolicyVersion(d.policy_version);
+      } else {
+        setPolicyVersion("Unauthorized");
       }
     } catch (e) {
       // Backend may be starting or offline
@@ -214,7 +232,10 @@ export default function App() {
         {/* Global Security Badges */}
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs">
-            <span className="text-slate-400 font-medium">Audit Chain:</span>
+            <span className="text-slate-400 font-medium flex items-center">
+              Audit Chain
+              <InfoTooltip text="The HMAC Hash Chain ensures that past logs, approvals, and decisions cannot be tampered with or deleted by an attacker or rogue agent." />:
+            </span>
             {auditVerify.valid ? (
               <span className="flex items-center text-emerald-400 font-semibold space-x-1">
                 <CheckCircle className="w-3.5 h-3.5" />
@@ -313,7 +334,10 @@ export default function App() {
             <div className="lg:col-span-2 space-y-4">
               <div className="flex items-center justify-between pb-2">
                 <div className="flex items-center space-x-2">
-                  <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">Evaluation Stream</h2>
+                  <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center">
+                    Evaluation Stream
+                    <InfoTooltip text="Real-time stream of all agent actions evaluated by the Guard's Rule and Policy engines. If an action breaches risk limits, it is flagged for REVIEW or BLOCK." />
+                  </h2>
                   <span className="text-xs text-slate-500 font-mono">({filteredDecisions.length} events)</span>
                 </div>
                 {/* Decision Filters */}
@@ -391,7 +415,10 @@ export default function App() {
                 ) : (
                   <div className="space-y-4 text-xs">
                     <div>
-                      <span className="text-slate-500 font-medium uppercase text-[10px] tracking-wider">Decision ID & Hash</span>
+                      <span className="text-slate-500 font-medium uppercase text-[10px] tracking-wider flex items-center">
+                        Decision ID & Hash
+                        <InfoTooltip text="Unique cryptographic identifier for this decision. The Action Hash mathematically guarantees the executed action exactly matches what was requested by the agent." />
+                      </span>
                       <p className="font-mono text-emerald-400 break-all text-[11px] mt-0.5">{selectedDecision.decision_id}</p>
                       <p className="font-mono text-slate-400 break-all text-[10px] mt-0.5">SHA-256: {selectedDecision.action_hash}</p>
                     </div>
@@ -406,7 +433,10 @@ export default function App() {
                         <span className="font-mono text-slate-200">{selectedDecision.action} on {selectedDecision.target}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Risk Score:</span>
+                        <span className="text-slate-400 flex items-center">
+                          Risk Score:
+                          <InfoTooltip text="Calculated dynamically by the Risk Engine based on environmental context (like data sensitivity, user role, and action time). Actions over threshold require human approval." />
+                        </span>
                         <span className="font-bold text-amber-400">{selectedDecision.risk_score} / 100 ({selectedDecision.risk_level})</span>
                       </div>
                       <div className="flex justify-between">
@@ -418,7 +448,10 @@ export default function App() {
                     {/* Risk Factors Breakdown */}
                     {selectedDecision.response?.factors?.length > 0 && (
                       <div>
-                        <span className="text-slate-400 font-semibold text-[11px]">Additive Risk Factors:</span>
+                        <span className="text-slate-400 font-semibold text-[11px] flex items-center">
+                          Additive Risk Factors:
+                          <InfoTooltip text="A breakdown of which contextual variables contributed to the overall Risk Score." />
+                        </span>
                         <ul className="mt-1 space-y-1">
                           {selectedDecision.response.factors.map((f, i) => (
                             <li key={i} className="text-[11px] font-mono text-slate-300 bg-slate-950/40 px-2 py-1 rounded border border-slate-800/60">
@@ -484,7 +517,10 @@ export default function App() {
           <div className="space-y-4 max-w-5xl mx-auto">
             <div className="flex items-center justify-between pb-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">Human-In-The-Loop Approval Queue</h2>
+                <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center">
+                  Human-In-The-Loop Approval Queue
+                  <InfoTooltip text="When an agent action exceeds the acceptable risk threshold, it is paused and sent here. Authorizations are single-use and expire after 10 minutes." />
+                </h2>
                 <p className="text-xs text-slate-400">Single-use, expiring authorizations bound to exact action hash (Invariant I5, I6)</p>
               </div>
               <span className="text-xs px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-lg">
@@ -498,10 +534,14 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-4">
-                {approvals.map((appr) => (
+                {[...approvals].sort((a,b) => {
+                  if(a.status === 'PENDING' && b.status !== 'PENDING') return -1;
+                  if(a.status !== 'PENDING' && b.status === 'PENDING') return 1;
+                  return new Date(b.created_at) - new Date(a.created_at);
+                }).filter(a => a.status === 'PENDING' || a.status === 'EXPIRED').map((appr) => (
                   <div 
                     key={appr.id}
-                    className="p-5 rounded-xl border border-slate-800 bg-slate-900/60 backdrop-blur space-y-4"
+                    className={`p-5 rounded-xl border border-slate-800 bg-slate-900/60 backdrop-blur space-y-4 ${appr.status !== 'PENDING' ? 'opacity-60' : ''}`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="space-y-1">
@@ -548,8 +588,9 @@ export default function App() {
 
                     {/* Raw Parameters Display (Section 11) */}
                     <div className="p-3 bg-slate-950/80 border border-slate-800/80 rounded-lg">
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                        Raw Action Parameters (Exact Binding):
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center mb-1">
+                        Raw Action Parameters (Exact Binding)
+                        <InfoTooltip text="These are the exact parameters bound to the cryptographic hash. If the agent later tries to change even one parameter (like increasing the transfer amount), the signature fails and the action is rejected." />:
                       </span>
                       <pre className="text-xs font-mono text-emerald-400 overflow-x-auto">
                         {JSON.stringify(appr.canonical_action, null, 2)}
@@ -587,7 +628,10 @@ export default function App() {
           <div className="space-y-4 max-w-6xl mx-auto">
             <div className="flex items-center justify-between pb-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">Tamper-Evident HMAC Hash Chain Audit Log</h2>
+                <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center">
+                  Tamper-Evident HMAC Hash Chain Audit Log
+                  <InfoTooltip text="A cryptographic ledger where each event includes a hash of the previous event. This guarantees forensic accountability and makes silent deletion or alteration by a compromised agent mathematically impossible." />
+                </h2>
                 <p className="text-xs text-slate-400">Append-only HMAC-SHA256 linked records (Invariant I9, Section 12)</p>
               </div>
 
@@ -652,7 +696,12 @@ export default function App() {
                     <th className="p-3">Decision ID</th>
                     <th className="p-3">Timestamp (UTC)</th>
                     <th className="p-3">Payload Summary</th>
-                    <th className="p-3">HMAC Record Hash</th>
+                    <th className="p-3">
+                      <div className="flex items-center">
+                        HMAC Record Hash
+                        <InfoTooltip text="SHA-256 hash mathematically binding this specific event to the previous event's hash, creating an unbreakable chain." />
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">

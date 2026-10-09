@@ -11,15 +11,14 @@ TOOL_CREDENTIAL = os.getenv("TOOL_CREDENTIAL")
 SERVICE_KEY = os.getenv("SERVICE_KEY")
 AUDIT_HMAC_KEY = os.getenv("AUDIT_HMAC_KEY")
 if not TOOL_CREDENTIAL or not SERVICE_KEY or not AUDIT_HMAC_KEY:
-    if os.getenv("ALLOW_INSECURE_DEV", "false").lower() != "true" and not os.path.exists(".env.gateway"):
-        raise RuntimeError("Startup failed: required gateway secrets missing (fail closed)")
+    raise RuntimeError("Startup failed: required gateway secrets missing (fail closed)")
 
-audit_logger = AuditLogger(db_path="audit.db", hmac_key=AUDIT_HMAC_KEY or "default_key")
-guard_client = GuardClient(service_key=SERVICE_KEY or "default_service_key")
+audit_logger = AuditLogger(db_path="audit.db", hmac_key=AUDIT_HMAC_KEY)
+guard_client = GuardClient(service_key=SERVICE_KEY)
 enforcer = GatewayEnforcer(
     guard_client=guard_client,
     audit_logger=audit_logger,
-    tool_credential=TOOL_CREDENTIAL or "default_tool_cred",
+    tool_credential=TOOL_CREDENTIAL,
 )
 
 app = FastAPI(title="AgentGuard AI - Execution Gateway")

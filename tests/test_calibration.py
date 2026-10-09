@@ -181,7 +181,7 @@ def test_scenario_13_unknown_target():
     rules_engine = HardRulesEngine()
     risk_engine = RiskEngine()
 
-    # READ mystery_db -> REVIEW (score 40, floor)
+    # READ mystery_db -> REVIEW (score 45, floor)
     req_read = ActionRequest(
         agent_id="database-agent-01",
         action=ActionType.READ,
@@ -194,7 +194,7 @@ def test_scenario_13_unknown_target():
     is_known = res_reg.is_known(req_read.target)  # False
 
     score, _, _, decision = risk_engine.evaluate(req_read, agent, resource, is_known)
-    assert score == 40
+    assert score == 45
     assert decision == DecisionOutcome.REVIEW
 
     # DELETE mystery_db -> BLOCK, matches REG-003

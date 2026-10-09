@@ -13,7 +13,9 @@ from common.clock import clock
 class AuditLogger:
     def __init__(self, db_path: str = "audit.db", hmac_key: Optional[str] = None):
         self.db_path = db_path
-        self.hmac_key = hmac_key or os.getenv("AUDIT_HMAC_KEY", "default_audit_hmac_key")
+        self.hmac_key = hmac_key or os.getenv("AUDIT_HMAC_KEY")
+        if not self.hmac_key:
+            raise RuntimeError("Audit HMAC key is missing")
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
