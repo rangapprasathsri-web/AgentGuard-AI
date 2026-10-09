@@ -21,7 +21,32 @@ const GATEWAY_API = 'http://localhost:8002';
 const DEMO_API = 'http://localhost:8004';
 const AGENTS_API = 'http://localhost:8003';
 
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, onSnapshot, query, orderBy, limit, doc } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+let db = null;
+if (firebaseConfig.apiKey) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+  } catch (e) {
+    console.warn("Firebase init failed", e);
+  }
+}
+
 export default function App() {
+  const [firebaseOffline, setFirebaseOffline] = useState(!db);
+  const [metricsSummary, setMetricsSummary] = useState(null);
+
   const [activeTab, setActiveTab] = useState('feed');
   const [currentRole, setCurrentRole] = useState('approver');
   const [currentActor, setCurrentActor] = useState('approver_cfo');
@@ -50,12 +75,80 @@ export default function App() {
   const [filterDecision, setFilterDecision] = useState('ALL');
   const [auditFilter, setAuditFilter] = useState('');
 
-  // Auto-poll every 2 seconds
+  // Auto-poll every 2 seconds or use Firebase
   useEffect(() => {
+    let unsubs = [];
+    
+    if (db && !firebaseOffline) {
+      try {
+        const decisionsQ = query(collection(db, "decisions"), orderBy("ts", "desc"), limit(50));
+        unsubs.push(onSnapshot(decisionsQ, (snapshot) => {
+          const newDecs = [];
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            newDecs.push({
+              decision_id: docSnap.id,
+              ...data,
+              created_at: data.ts,
+              decision_source: 'firebase_mirror',
+              action_hash: 'not_mirrored',
+              risk_level: 'unknown',
+              response: { factors: data.reasons }
+            });
+          });
+          setDecisions(newDecs);
+        }, (err) => setFirebaseOffline(true)));
+
+        const approvalsQ = query(collection(db, "approvals"), orderBy("created_at", "desc"), limit(50));
+        unsubs.push(onSnapshot(approvalsQ, (snapshot) => {
+          const newApps = [];
+          snapshot.forEach(docSnap => newApps.push({id: docSnap.id, ...docSnap.data()}));
+          setApprovals(newApps);
+        }, (err) => setFirebaseOffline(true)));
+
+        const summaryDoc = doc(db, "metrics", "summary");
+        unsubs.push(onSnapshot(summaryDoc, (docSnap) => {
+          if (docSnap.exists()) {
+             setMetricsSummary(docSnap.data());
+          }
+        }, (err) => setFirebaseOffline(true)));
+      } catch (err) {
+        setFirebaseOffline(true);
+      }
+    }
+    
+    // Initial fetch for non-mirrored stuff
     fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
-  }, [currentRole, currentActor]);
+    const interval = setInterval(() => {
+       if (firebaseOffline || !db) {
+         fetchData();
+       } else {
+         fetchNonMirrored();
+       }
+    }, 2000);
+    
+    return () => {
+      clearInterval(interval);
+      unsubs.forEach(u => u());
+    };
+  }, [currentRole, currentActor, firebaseOffline]);
+
+  const fetchNonMirrored = async () => {
+    try {
+      const headers = getHeaders();
+      // Only fetch audit, agents, resources, policy
+      const audRes = await fetch(`${GUARD_API}/audit?limit=50`, { headers });
+      if (audRes.ok) setAuditEvents(await audRes.json());
+      const verRes = await fetch(`${GUARD_API}/audit/verify`, { headers });
+      if (verRes.ok) setAuditVerify(await verRes.json());
+      const agRes = await fetch(`${GUARD_API}/agents`, { headers });
+      if (agRes.ok) setAgents(await agRes.json());
+      const resRes = await fetch(`${GUARD_API}/resources`, { headers });
+      if (resRes.ok) setResources(await resRes.json());
+      const polRes = await fetch(`${GUARD_API}/policy/version`, { headers });
+      if (polRes.ok) setPolicyVersion((await polRes.json()).policy_version);
+    } catch (e) {}
+  };
 
   const getHeaders = () => ({
     'X-Role': currentRole,
@@ -232,6 +325,20 @@ export default function App() {
         {/* Global Security Badges */}
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs">
+            {firebaseOffline ? (
+              <span className="flex items-center text-rose-400 font-semibold space-x-1">
+                <XCircle className="w-3.5 h-3.5" />
+                <span>FIREBASE OFFLINE</span>
+              </span>
+            ) : (
+              <span className="flex items-center text-emerald-400 font-semibold space-x-1 animate-pulse">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div>
+                <span>LIVE MIRROR</span>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs">
             <span className="text-slate-400 font-medium flex items-center">
               Audit Chain
               <InfoTooltip text="The HMAC Hash Chain ensures that past logs, approvals, and decisions cannot be tampered with or deleted by an attacker or rogue agent." />:
@@ -325,6 +432,16 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {metricsSummary && !firebaseOffline && (
+        <div className="bg-slate-900 border-b border-slate-800 p-3 flex justify-between text-xs px-6">
+          <span className="text-slate-400">Total Allowed: <strong className="text-emerald-400">{metricsSummary.allow_count || 0}</strong></span>
+          <span className="text-slate-400">Total Reviewed: <strong className="text-amber-400">{metricsSummary.review_count || 0}</strong></span>
+          <span className="text-slate-400">Total Blocked: <strong className="text-rose-400">{metricsSummary.block_count || 0}</strong></span>
+          <span className="text-slate-400">Pending Approvals: <strong className="text-blue-400">{metricsSummary.pending_approvals || 0}</strong></span>
+          <span className="text-slate-400">Blocked Value: <strong className="text-rose-400">₹{metricsSummary.blocked_amount_inr || 0}</strong></span>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="flex-1 p-6 overflow-auto">

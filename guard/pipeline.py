@@ -361,6 +361,21 @@ class GuardPipeline:
             # Commit the entire atomic authorize transaction
             conn.commit()
 
+            try:
+                from guard.mirror import firebase_mirror
+                firebase_mirror.mirror_approval(
+                    approval_id=approval_id,
+                    state="CONSUMED",
+                    request_hash=action_hash,
+                    decided_by_role=appr.get("approver"),
+                    created_at=appr.get("created_at"),
+                    decided_at=appr.get("approved_at"),
+                    consumed_at=now_iso
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger("firebase_mirror").warning(f"Error calling mirror_approval: {e}")
+
             # f) Return signed authorization
             auth_payload = {
                 "decision_id": appr["decision_id"],

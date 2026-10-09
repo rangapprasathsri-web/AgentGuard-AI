@@ -22,6 +22,8 @@ from guard.registries import AgentRegistry, ResourceRegistry
 from guard.risk import RiskEngine
 from guard.rules import HardRulesEngine
 
+from guard.mirror import firebase_mirror
+
 from common.secrets import get_validated_secret
 
 # Verify required secrets at startup (Fail closed)
@@ -89,8 +91,18 @@ def require_role(allowed_roles: List[str], x_role: Optional[str] = Header(None))
     return x_role
 
 
+@app.get("/mirror/status")
+async def get_mirror_status():
+    return firebase_mirror.get_status()
+
+
 @app.get("/health")
 async def health_check():
+    try:
+        from guard.mirror import firebase_mirror
+        firebase_mirror.mirror_health("guard", "1.0", "ok")
+    except Exception:
+        pass
     return {"status": "ok"}
 
 
@@ -128,6 +140,25 @@ async def evaluate_action(
             ),
         )
         conn.commit()
+
+    try:
+        firebase_mirror.mirror_decision(
+            decision_id=resp.decision_id,
+            agent_id=request.agent_id,
+            action=request.action.value,
+            target=request.target,
+            decision=resp.decision.value,
+            risk_score=resp.risk_score,
+            reasons=resp.factors,
+            rule_ids=[p.get("policy_id") for p in resp.matched_policies] if resp.matched_policies else [],
+            amount=request.params.get("amount", 0),
+            params=request.params,
+            approval_id=resp.approval_id,
+            latency_ms=0.0
+        )
+    except Exception as e:
+        import logging
+        logging.getLogger("firebase_mirror").warning(f"Error calling mirror_decision: {e}")
 
     # Append decision_made audit event (including ALLOW)
     audit_logger.append_event(

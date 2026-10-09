@@ -32,6 +32,11 @@ app.add_middleware(
 )
 @app.get("/health")
 async def health_check():
+    try:
+        from guard.mirror import firebase_mirror
+        firebase_mirror.mirror_health("gateway", "1.0", "ok")
+    except Exception:
+        pass
     return {"status": "ok"}
 
 

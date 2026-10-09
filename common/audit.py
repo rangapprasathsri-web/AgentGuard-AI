@@ -120,7 +120,21 @@ class AuditLogger:
                         record_hash,
                     ),
                 )
+                seq = cursor.lastrowid
                 conn.commit()
+
+                try:
+                    from guard.mirror import firebase_mirror
+                    firebase_mirror.mirror_audit(
+                        seq=seq,
+                        entry_hash=record_hash,
+                        prev_hash=prev_hash,
+                        event_type=event_type,
+                        ts=real_utc_timestamp
+                    )
+                except Exception as e:
+                    import logging
+                    logging.getLogger("firebase_mirror").warning(f"Error calling mirror_audit: {e}")
 
                 return {
                     "id": event_id,

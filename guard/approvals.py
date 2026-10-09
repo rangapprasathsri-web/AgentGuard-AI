@@ -168,6 +168,21 @@ class ApprovalManager:
             )
             conn.commit()
 
+        try:
+            from guard.mirror import firebase_mirror
+            firebase_mirror.mirror_approval(
+                approval_id=approval_id,
+                state="PENDING",
+                request_hash=action_hash,
+                decided_by_role=None,
+                created_at=now_iso,
+                decided_at=None,
+                consumed_at=None
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("firebase_mirror").warning(f"Error calling mirror_approval: {e}")
+
         return approval_id, None
 
     def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
@@ -246,6 +261,23 @@ class ApprovalManager:
                 return False, f"unknown decision {decision}"
 
             conn.commit()
+            
+            try:
+                from guard.mirror import firebase_mirror
+                state = "APPROVED" if decision == "APPROVE" else "REJECTED"
+                firebase_mirror.mirror_approval(
+                    approval_id=approval_id,
+                    state=state,
+                    request_hash=data["action_hash"],
+                    decided_by_role=approver,
+                    created_at=data["created_at"],
+                    decided_at=now_iso,
+                    consumed_at=None
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger("firebase_mirror").warning(f"Error calling mirror_approval: {e}")
+
             return True, None
 
     def void_approval(self, approval_id: str, reason: str) -> None:
@@ -256,6 +288,27 @@ class ApprovalManager:
                 (reason, now_iso, approval_id),
             )
             conn.commit()
+            
+            try:
+                from guard.mirror import firebase_mirror
+                # We need request_hash and created_at to mirror properly
+                # But void_approval doesn't fetch it here, let's just do a best effort
+                # or fetch it if needed. Actually it's fine if request_hash is empty for VOIDED
+                cursor = conn.execute("SELECT action_hash, created_at FROM approvals WHERE id = ?", (approval_id,))
+                row = cursor.fetchone()
+                if row:
+                    firebase_mirror.mirror_approval(
+                        approval_id=approval_id,
+                        state="VOIDED",
+                        request_hash=row["action_hash"],
+                        decided_by_role=None,
+                        created_at=row["created_at"],
+                        decided_at=now_iso,
+                        consumed_at=None
+                    )
+            except Exception as e:
+                import logging
+                logging.getLogger("firebase_mirror").warning(f"Error calling mirror_approval: {e}")
 
     def reset_approvals(self) -> None:
         """Clear approvals table for demo/test reset."""
