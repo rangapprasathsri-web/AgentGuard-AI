@@ -404,13 +404,13 @@ limits:
     # to return REVIEW only when only_check=False.
     
     original_check = ledger.check_and_reserve
-    def mock_check(reservation_id, agent_id, action, target, amount, request_hash="", only_check=False, conn=None, bypass_soft_limit=False):
+    def mock_check(reservation_id, agent_id, action, target, amount, tenant_id="demo", request_hash="", only_check=False, conn=None, bypass_soft_limit=False):
         if only_check:
             # Fake ALLOW during evaluation
             return DecisionOutcome.ALLOW, "mocked_allow", 6000, 0
         else:
             # Fallback to real logic which will return REVIEW because 12000 > 10000
-            return original_check(reservation_id, agent_id, action, target, amount, request_hash, only_check, conn, bypass_soft_limit)
+            return original_check(reservation_id, agent_id, action, target, amount, tenant_id, request_hash, only_check, conn, bypass_soft_limit)
             
     ledger.check_and_reserve = mock_check
     

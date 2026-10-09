@@ -96,6 +96,7 @@ def validate_strict_int(val: Any, field_name: str) -> int:
 
 
 class ActionRequest(BaseModel):
+    tenant_id: str = "demo"
     agent_id: str
     action: ActionType
     target: str = Field(..., max_length=100)
@@ -166,6 +167,7 @@ class MatchedPolicy(BaseModel):
 
 
 class EvaluationResponse(BaseModel):
+    tenant_id: str = "demo"
     decision_id: str
     decision: DecisionOutcome
     risk_score: int

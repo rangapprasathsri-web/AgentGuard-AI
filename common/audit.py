@@ -31,6 +31,7 @@ class AuditLogger:
                 """
                 CREATE TABLE IF NOT EXISTS audit_events (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id TEXT NOT NULL DEFAULT 'demo',
                     id TEXT UNIQUE NOT NULL,
                     decision_id TEXT,
                     event_type TEXT NOT NULL, -- decision_made | approval_decided | executed | security_signal
@@ -57,6 +58,13 @@ class AuditLogger:
                 )
                 """
             )
+            
+            # Migration: add tenant_id if missing
+            try:
+                conn.execute("ALTER TABLE audit_events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'demo'")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+                
             conn.commit()
 
     def _compute_record_hash(self, prev_hash: str, payload_str: str) -> str:
@@ -72,6 +80,7 @@ class AuditLogger:
         event_type: str,
         payload: Dict[str, Any],
         decision_id: Optional[str] = None,
+        tenant_id: str = "demo",
         max_retries: int = 5,
     ) -> Dict[str, Any]:
         """
@@ -82,6 +91,9 @@ class AuditLogger:
         # Ensure effective_time from Guard clock is present in payload
         if "effective_time" not in payload:
             payload["effective_time"] = clock.now_iso()
+            
+        # Include tenant_id inside the hashed payload
+        payload["tenant_id"] = tenant_id
 
         payload_str = canonical_json(payload)
         event_id = f"evt_{uuid.uuid4().hex[:12]}"
@@ -107,11 +119,12 @@ class AuditLogger:
                 conn.execute(
                     """
                     INSERT INTO audit_events 
-                    (id, decision_id, event_type, timestamp, payload, prev_hash, record_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, tenant_id, decision_id, event_type, timestamp, payload, prev_hash, record_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         event_id,
+                        tenant_id,
                         decision_id,
                         event_type,
                         real_utc_timestamp,
@@ -124,6 +137,7 @@ class AuditLogger:
 
                 return {
                     "id": event_id,
+                    "tenant_id": tenant_id,
                     "decision_id": decision_id,
                     "event_type": event_type,
                     "timestamp": real_utc_timestamp,

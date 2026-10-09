@@ -187,6 +187,7 @@ class GuardPipeline:
                 action=request.action.value,
                 target=request.target,
                 amount=amount,
+                tenant_id=request.tenant_id,
                 request_hash=action_hash,
                 only_check=False,
             )
@@ -203,6 +204,7 @@ class GuardPipeline:
                 agent_id=request.agent_id,
                 action_hash=action_hash,
                 canonical_action={
+                    "tenant_id": request.tenant_id,
                     "agent_id": request.agent_id,
                     "action": request.action.value,
                     "target": request.target,
@@ -213,6 +215,7 @@ class GuardPipeline:
                 consequences=consequences,
                 rag_citations=rag_citations or [],
                 policy_version=policy_ver,
+                tenant_id=request.tenant_id,
             )
             if signal == "approval_flood":
                 final_decision = DecisionOutcome.BLOCK
@@ -353,10 +356,10 @@ class GuardPipeline:
                     conn.execute(
                         """
                         INSERT INTO cumulative_ledger 
-                        (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
+                        (reservation_id, tenant_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                         """,
-                        (appr["decision_id"], request.agent_id, request.action.value, request.target, amount, action_hash, now_iso, exec_expiry, now_iso)
+                        (appr["decision_id"], appr["tenant_id"], request.agent_id, request.action.value, request.target, amount, action_hash, now_iso, exec_expiry, now_iso)
                     )
 
             # Commit the entire atomic authorize transaction

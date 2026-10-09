@@ -31,6 +31,7 @@ class CumulativeLedger:
                     target TEXT NOT NULL,
                     amount INTEGER NOT NULL,
                     status TEXT NOT NULL, -- RESERVED | EXECUTED | RELEASED
+                    tenant_id TEXT NOT NULL DEFAULT 'demo',
                     request_hash TEXT, -- Made nullable for backward compatibility on migrations if needed, but we will pass it
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
@@ -41,9 +42,16 @@ class CumulativeLedger:
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_ledger_key 
-                ON cumulative_ledger(agent_id, action, target, status, created_at)
+                ON cumulative_ledger(tenant_id, agent_id, action, target, status, created_at)
                 """
             )
+            
+            # Migration: add tenant_id if missing
+            try:
+                conn.execute("ALTER TABLE cumulative_ledger ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'demo'")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+                
             conn.commit()
 
     def check_and_reserve(
@@ -53,6 +61,7 @@ class CumulativeLedger:
         action: str,
         target: str,
         amount: int,
+        tenant_id: str = "demo",
         request_hash: str = "",
         only_check: bool = False,
         conn: Optional[sqlite3.Connection] = None,
@@ -109,11 +118,11 @@ class CumulativeLedger:
                 """
                 SELECT SUM(amount) as total_amount
                 FROM cumulative_ledger
-                WHERE agent_id = ? AND action = ? AND target = ?
+                WHERE tenant_id = ? AND agent_id = ? AND action = ? AND target = ?
                   AND created_at >= ?
                   AND (status = 'EXECUTED' OR (status = 'RESERVED' AND expires_at > ?))
                 """,
-                (agent_id, action, target, window_start_iso, now_iso),
+                (tenant_id, agent_id, action, target, window_start_iso, now_iso),
             )
             row = cursor.fetchone()
             current_active_total = int(row["total_amount"]) if row and row["total_amount"] is not None else 0
@@ -124,11 +133,11 @@ class CumulativeLedger:
                 """
                 SELECT COUNT(*) as rapid_cnt
                 FROM cumulative_ledger
-                WHERE agent_id = ? AND action = ? AND target = ?
+                WHERE tenant_id = ? AND agent_id = ? AND action = ? AND target = ?
                   AND created_at >= ?
                   AND (status = 'EXECUTED' OR (status = 'RESERVED' AND expires_at > ?))
                 """,
-                (agent_id, action, target, rapid_start_iso, now_iso),
+                (tenant_id, agent_id, action, target, rapid_start_iso, now_iso),
             )
             row = cursor.fetchone()
             prior_rapid_count = int(row["rapid_cnt"]) if row and row["rapid_cnt"] is not None else 0
@@ -163,11 +172,12 @@ class CumulativeLedger:
                         conn.execute(
                             """
                             INSERT INTO cumulative_ledger 
-                            (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
+                            (reservation_id, tenant_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                             """,
                             (
                                 reservation_id,
+                                tenant_id,
                                 agent_id,
                                 action,
                                 target,
@@ -195,11 +205,12 @@ class CumulativeLedger:
                 conn.execute(
                     """
                     INSERT INTO cumulative_ledger 
-                    (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
+                    (reservation_id, tenant_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                     """,
                     (
                         reservation_id,
+                        tenant_id,
                         agent_id,
                         action,
                         target,

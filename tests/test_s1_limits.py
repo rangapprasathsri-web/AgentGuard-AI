@@ -80,17 +80,17 @@ limits:
     empty_ledger.limits_path = str(limits_path)
     
     # First request
-    dec, _, _, _ = empty_ledger.check_and_reserve("r1", "ag1", "CREATE", "payments_api", 500, "h1")
+    dec, _, _, _ = empty_ledger.check_and_reserve("r1", "ag1", "CREATE", "payments_api", 500, request_hash="h1")
     assert dec == DecisionOutcome.ALLOW
     
     # Second request in rapid window (rapid_count is 2, so this is allowed?)
     # Wait, the logic is: prior_rapid_count >= rapid_count
     # So 1st (prior=0), 2nd (prior=1) => ALLOW
-    dec, _, _, _ = empty_ledger.check_and_reserve("r2", "ag1", "CREATE", "payments_api", 500, "h2")
+    dec, _, _, _ = empty_ledger.check_and_reserve("r2", "ag1", "CREATE", "payments_api", 500, request_hash="h2")
     assert dec == DecisionOutcome.ALLOW
     
     # Third request in rapid window (prior=2 >= rapid_count=2, total=1500 > soft_limit=1000)
-    dec, _, _, _ = empty_ledger.check_and_reserve("r3", "ag1", "CREATE", "payments_api", 500, "h3")
+    dec, _, _, _ = empty_ledger.check_and_reserve("r3", "ag1", "CREATE", "payments_api", 500, request_hash="h3")
     assert dec == DecisionOutcome.BLOCK
 
 def test_s1_window_hours_honored(empty_ledger, tmp_path):
@@ -114,14 +114,14 @@ limits:
         conn.execute(
             """
             INSERT INTO cumulative_ledger 
-            (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'EXECUTED', ?, ?, ?, ?)
+            (reservation_id, tenant_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'EXECUTED', ?, ?, ?, ?)
             """,
-            ("old", "ag1", "CREATE", "payments_api", 4000, "h-old", old_iso, old_iso, old_iso)
+            ("old", "demo", "ag1", "CREATE", "payments_api", 4000, "h-old", old_iso, old_iso, old_iso)
         )
         conn.commit()
     
     # Current request of 2000. If 1-hour window is honored, the 4000 is ignored, so 2000 < hard_cap 5000.
-    dec, _, total, _ = empty_ledger.check_and_reserve("new", "ag1", "CREATE", "payments_api", 2000, "h-new")
+    dec, _, total, _ = empty_ledger.check_and_reserve("new", "ag1", "CREATE", "payments_api", 2000, request_hash="h-new")
     assert dec == DecisionOutcome.REVIEW # 2000 > soft_limit 1000
     assert total == 2000

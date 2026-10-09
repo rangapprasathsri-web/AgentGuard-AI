@@ -34,6 +34,7 @@ class ApprovalManager:
                 """
                 CREATE TABLE IF NOT EXISTS approvals (
                     id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL DEFAULT 'demo',
                     decision_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     action_hash TEXT NOT NULL,
@@ -59,6 +60,13 @@ class ApprovalManager:
                 ON approvals(agent_id, action_hash, status)
                 """
             )
+            
+            # Migration: add tenant_id if missing
+            try:
+                conn.execute("ALTER TABLE approvals ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'demo'")
+            except sqlite3.OperationalError:
+                pass # Column already exists
+                
             conn.commit()
 
     def _evaluate_expiry(self, row: sqlite3.Row, conn: sqlite3.Connection) -> Dict[str, Any]:
@@ -78,28 +86,28 @@ class ApprovalManager:
                 data["updated_at"] = now_iso
         return data
 
-    def find_pending_identical(self, agent_id: str, action_hash: str) -> Optional[Dict[str, Any]]:
+    def find_pending_identical(self, tenant_id: str, agent_id: str, action_hash: str) -> Optional[Dict[str, Any]]:
         """Resubmitting an identical pending action returns existing approval rather than creating another."""
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 SELECT * FROM approvals
-                WHERE agent_id = ? AND action_hash = ? AND status = 'PENDING'
+                WHERE tenant_id = ? AND agent_id = ? AND action_hash = ? AND status = 'PENDING'
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (agent_id, action_hash),
+                (tenant_id, agent_id, action_hash),
             )
             row = cursor.fetchone()
             if row:
                 return self._evaluate_expiry(row, conn)
         return None
 
-    def count_pending(self, agent_id: str) -> int:
+    def count_pending(self, tenant_id: str, agent_id: str) -> int:
         """Counts active pending approvals for an agent."""
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT * FROM approvals WHERE agent_id = ? AND status = 'PENDING'",
-                (agent_id,),
+                "SELECT * FROM approvals WHERE tenant_id = ? AND agent_id = ? AND status = 'PENDING'",
+                (tenant_id, agent_id),
             )
             rows = cursor.fetchall()
             count = 0
@@ -120,6 +128,7 @@ class ApprovalManager:
         consequences: List[str],
         rag_citations: List[str],
         policy_version: str,
+        tenant_id: str = "demo",
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Creates a pending approval.
@@ -127,12 +136,12 @@ class ApprovalManager:
         Returns: (approval_id, error_signal)
         """
         # 1. Check if identical pending exists
-        existing = self.find_pending_identical(agent_id, action_hash)
+        existing = self.find_pending_identical(tenant_id, agent_id, action_hash)
         if existing and existing["status"] == ApprovalStatus.PENDING.value:
             return existing["id"], None
 
         # 2. Check flood limit (max 20 pending)
-        pending_cnt = self.count_pending(agent_id)
+        pending_cnt = self.count_pending(tenant_id, agent_id)
         if pending_cnt >= 20:
             return None, "approval_flood"
 
@@ -145,13 +154,14 @@ class ApprovalManager:
             conn.execute(
                 """
                 INSERT INTO approvals
-                (id, decision_id, agent_id, action_hash, canonical_action, status,
+                (id, tenant_id, decision_id, agent_id, action_hash, canonical_action, status,
                  risk_score, factors, consequences, rag_citations, policy_version,
                  created_at, expires_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
+                    tenant_id,
                     decision_id,
                     agent_id,
                     action_hash,

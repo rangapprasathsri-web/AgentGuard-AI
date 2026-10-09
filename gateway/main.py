@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from common.audit import AuditLogger
 from gateway.enforcement import GatewayEnforcer
 from gateway.guard_client import GuardClient
+from guard.tenants import TenantStore
 
 from common.secrets import get_validated_secret
 
@@ -20,6 +21,7 @@ enforcer = GatewayEnforcer(
     audit_logger=audit_logger,
     tool_credential=TOOL_CREDENTIAL,
 )
+tenant_store = TenantStore()
 
 app = FastAPI(title="AgentGuard AI - Execution Gateway")
 
@@ -40,11 +42,25 @@ async def execute_action(
     request: Request,
     x_actor: Optional[str] = Header(None),
     x_role: Optional[str] = Header(None),
+    x_agentguard_tenant: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
 ):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    api_key = authorization.replace("Bearer ", "")
+    tenant_id = tenant_store.verify_api_key(api_key)
+    
+    if not tenant_id or tenant_id != x_agentguard_tenant:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # Inject tenant_id
+    body["tenant_id"] = tenant_id
 
     status_code, resp = await enforcer.execute_action(
         raw_body=body,
@@ -63,7 +79,18 @@ async def get_approval_status(
     approval_id: str,
     x_actor: Optional[str] = Header(None),
     x_role: Optional[str] = Header(None),
+    x_agentguard_tenant: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
 ):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    api_key = authorization.replace("Bearer ", "")
+    tenant_id = tenant_store.verify_api_key(api_key)
+    
+    if not tenant_id or tenant_id != x_agentguard_tenant:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     # Only agent role can check own status (Section 7)
     if x_role != "agent" or not x_actor:
         raise HTTPException(status_code=403, detail="Forbidden")
