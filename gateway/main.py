@@ -43,12 +43,21 @@ async def execute_action(
     x_actor: Optional[str] = Header(None),
     x_role: Optional[str] = Header(None),
     x_agentguard_tenant: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    if not authorization or not authorization.startswith("Bearer "):
+    # Extract API key from X-API-Key or Authorization Bearer header
+    api_key = x_api_key
+    if not api_key and authorization and authorization.startswith("Bearer "):
+        api_key = authorization[7:].strip()
+
+    if not api_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # The Gateway must reject Firebase ID tokens (JWTs)
+    if api_key.startswith("eyJ") or api_key.count(".") == 2:
+        raise HTTPException(status_code=401, detail="Unauthorized: Gateway rejects Firebase ID tokens")
     
-    api_key = authorization.replace("Bearer ", "")
     tenant_id = tenant_store.verify_api_key(api_key)
     
     if not tenant_id or tenant_id != x_agentguard_tenant:
@@ -81,12 +90,20 @@ async def get_approval_status(
     x_actor: Optional[str] = Header(None),
     x_role: Optional[str] = Header(None),
     x_agentguard_tenant: Optional[str] = Header(None),
+    x_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    if not authorization or not authorization.startswith("Bearer "):
+    api_key = x_api_key
+    if not api_key and authorization and authorization.startswith("Bearer "):
+        api_key = authorization[7:].strip()
+
+    if not api_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Reject Firebase ID tokens
+    if api_key.startswith("eyJ") or api_key.count(".") == 2:
+        raise HTTPException(status_code=401, detail="Unauthorized: Gateway rejects Firebase ID tokens")
     
-    api_key = authorization.replace("Bearer ", "")
     tenant_id = tenant_store.verify_api_key(api_key)
     
     if not tenant_id or tenant_id != x_agentguard_tenant:

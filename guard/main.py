@@ -2,9 +2,10 @@ import json
 import os
 import sqlite3
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from auth.firebase_auth import current_owner, sensitive_owner
 from common.audit import AuditLogger
 from common.clock import clock
 from common.schemas import (
@@ -123,7 +124,159 @@ async def register_tenant(req: TenantRegisterRequest):
     )
 
 
-# -------------------------------------------------------------
+class OwnerTenantRegisterRequest(BaseModel):
+    company: str
+    owner_email: Optional[str] = None
+
+
+class ConnectCodeRequest(BaseModel):
+    company: str
+    state: str
+    return_url: str
+    tenant_id: Optional[str] = None
+
+
+class ConnectExchangeRequest(BaseModel):
+    code: str
+    state: str
+    return_url: str
+
+
+@app.post("/tenants/register", response_model=TenantRegisterResponse)
+async def register_owner_tenant(
+    req: OwnerTenantRegisterRequest,
+    owner: Dict[str, Any] = Depends(sensitive_owner),
+):
+    owner_email = req.owner_email or owner["email"]
+    tenant_id, api_key = tenant_store.register_tenant(
+        company=req.company,
+        owner_email=owner_email,
+        owner_uid=owner["uid"],
+    )
+    approver_token = tenant_store.register_approver(tenant_id, "Default Approver", "approver")
+    gateway_url = "http://localhost:8002"
+    audit_logger.append_event(
+        event_type="tenant_registered",
+        payload={"tenant_id": tenant_id, "owner_uid": owner["uid"], "company": req.company},
+    )
+    return TenantRegisterResponse(
+        tenant_id=tenant_id,
+        api_key=api_key,
+        approver_token=approver_token,
+        gateway_url=gateway_url,
+    )
+
+
+@app.get("/tenants/mine")
+async def list_owner_tenants(owner: Dict[str, Any] = Depends(current_owner)):
+    tenants = tenant_store.get_tenants_by_owner(owner["uid"])
+    return [
+        {
+            "tenant_id": t["id"],
+            "id": t["id"],
+            "company": t["company"],
+            "owner_email": t["owner_email"],
+            "status": t["status"],
+            "created_at": t["created_at"],
+        }
+        for t in tenants
+    ]
+
+
+@app.post("/tenants/{id}/rotate-key")
+async def rotate_tenant_key(
+    id: str,
+    owner: Dict[str, Any] = Depends(sensitive_owner),
+):
+    t = tenant_store.get_tenant(id)
+    if not t:
+        raise HTTPException(status_code=404, detail="tenant_not_found")
+    if t.get("owner_uid") != owner["uid"]:
+        audit_logger.append_event(
+            event_type="security_signal",
+            tenant_id=id,
+            payload={
+                "signal": "unauthorized_tenant_rotate",
+                "target_tenant": id,
+                "caller_uid": owner["uid"],
+            },
+        )
+        raise HTTPException(status_code=403, detail="forbidden_tenant_owner_mismatch")
+
+    new_key = tenant_store.rotate_api_key(id)
+    audit_logger.append_event(
+        event_type="tenant_key_rotated",
+        tenant_id=id,
+        payload={"tenant_id": id, "owner_uid": owner["uid"]},
+    )
+    return {"tenant_id": id, "api_key": new_key, "status": "rotated"}
+
+
+@app.post("/tenants/{id}/revoke-key")
+async def revoke_tenant_key(
+    id: str,
+    owner: Dict[str, Any] = Depends(sensitive_owner),
+):
+    t = tenant_store.get_tenant(id)
+    if not t:
+        raise HTTPException(status_code=404, detail="tenant_not_found")
+    if t.get("owner_uid") != owner["uid"]:
+        audit_logger.append_event(
+            event_type="security_signal",
+            tenant_id=id,
+            payload={
+                "signal": "unauthorized_tenant_revoke",
+                "target_tenant": id,
+                "caller_uid": owner["uid"],
+            },
+        )
+        raise HTTPException(status_code=403, detail="forbidden_tenant_owner_mismatch")
+
+    tenant_store.revoke_api_key(id)
+    audit_logger.append_event(
+        event_type="tenant_key_revoked",
+        tenant_id=id,
+        payload={"tenant_id": id, "owner_uid": owner["uid"]},
+    )
+    return {"tenant_id": id, "status": "revoked"}
+
+
+@app.post("/connect/code")
+async def create_connect_code(
+    req: ConnectCodeRequest,
+    owner: Dict[str, Any] = Depends(sensitive_owner),
+):
+    if req.tenant_id:
+        t = tenant_store.get_tenant(req.tenant_id)
+        if not t or t.get("owner_uid") != owner["uid"]:
+            raise HTTPException(status_code=403, detail="forbidden_tenant_owner_mismatch")
+        tenant_id = req.tenant_id
+        api_key = tenant_store.create_api_key(tenant_id)
+        approver_token = tenant_store.register_approver(tenant_id, "Connect Approver", "approver")
+    else:
+        owner_email = owner["email"]
+        tenant_id, api_key = tenant_store.register_tenant(req.company, owner_email, owner_uid=owner["uid"])
+        approver_token = tenant_store.register_approver(tenant_id, "Default Approver", "approver")
+
+    code = tenant_store.create_connect_code(
+        tenant_id=tenant_id,
+        api_key=api_key,
+        approver_token=approver_token,
+        state=req.state,
+        return_url=req.return_url,
+    )
+    sep = "&" if "?" in req.return_url else "?"
+    redirect_url = f"{req.return_url}{sep}code={code}&state={req.state}"
+    return {"code": code, "redirect_url": redirect_url}
+
+
+@app.post("/connect/exchange")
+async def exchange_connect_code(req: ConnectExchangeRequest):
+    res = tenant_store.exchange_connect_code(req.code, req.state, req.return_url)
+    if not res:
+        raise HTTPException(status_code=400, detail="invalid_or_expired_connect_code")
+    res["gateway_url"] = "http://localhost:8002"
+    return res
 # Service-Only Endpoints (Gateway -> Guard)
 # -------------------------------------------------------------
 @app.post("/guard/evaluate", response_model=EvaluationResponse)

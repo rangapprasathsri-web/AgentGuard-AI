@@ -104,6 +104,21 @@ class TenantStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS connect_codes (
+                    code TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    approver_token TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    return_url TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
             
             # Seed the default demo tenant if it doesn't exist
             cursor = conn.execute("SELECT id FROM tenants WHERE id = 'demo'")
@@ -311,3 +326,72 @@ class TenantStore:
             if row:
                 return dict(row)
         return None
+
+    def create_connect_code(
+        self,
+        tenant_id: str,
+        api_key: str,
+        approver_token: str,
+        state: str,
+        return_url: str,
+    ) -> str:
+        """Issues a single-use connect code valid for 60 seconds, bound to state and return_url."""
+        import time
+        code = secrets.token_urlsafe(32)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        expires_at = time.time() + 60.0
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO connect_codes (code, tenant_id, api_key, approver_token, state, return_url, created_at, expires_at, used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (code, tenant_id, api_key, approver_token, state, return_url, now_iso, expires_at),
+            )
+            conn.commit()
+        return code
+
+    def exchange_connect_code(
+        self,
+        code: str,
+        state: str,
+        return_url: str,
+    ) -> Optional[Dict[str, str]]:
+        """Exchanges a single-use connect code within 60s, checking state and return_url."""
+        import time
+        now = time.time()
+        with self._get_connection() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.execute(
+                    "SELECT tenant_id, api_key, approver_token, state, return_url, expires_at, used FROM connect_codes WHERE code = ?",
+                    (code,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    conn.rollback()
+                    return None
+                if row["used"] != 0:
+                    conn.rollback()
+                    return None
+                if row["expires_at"] < now:
+                    conn.rollback()
+                    return None
+                if row["state"] != state or row["return_url"] != return_url:
+                    conn.rollback()
+                    return None
+                
+                conn.execute(
+                    "UPDATE connect_codes SET used = 1 WHERE code = ?",
+                    (code,)
+                )
+                conn.commit()
+                return {
+                    "tenant_id": row["tenant_id"],
+                    "api_key": row["api_key"],
+                    "approver_token": row["approver_token"],
+                }
+            except Exception:
+                conn.rollback()
+                raise
+
