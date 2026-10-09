@@ -38,3 +38,7 @@ This document records all decisions made where requirements were ambiguous, cont
 
 ### Phase A2: test_invariant_i10
 - **Decision:** Changed test_invariant_i10 to assert BLOCK instead of REVIEW for an amount exceeding the hard cap (250,000 > 200,000). Per invariant I4, the most severe check wins, so exceeding the hard cap must yield BLOCK regardless of the soft limits. The test was stale.
+
+### Decision 7: Threshold Decision (B2)
+- **Context**: `policies/thresholds.yaml` historically had 45, but README and older docs mentioned 40.
+- **Decision**: Keep the threshold at 40 (`allow_max: 39`, `review_min: 40`). This decision is now applied consistently across config and tests.
