@@ -187,6 +187,7 @@ class GuardPipeline:
                 action=request.action.value,
                 target=request.target,
                 amount=amount,
+                request_hash=action_hash,
                 only_check=False,
             )
             # Escalate if cumulative decision is more severe
@@ -352,10 +353,10 @@ class GuardPipeline:
                     conn.execute(
                         """
                         INSERT INTO cumulative_ledger 
-                        (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                        (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                         """,
-                        (appr["decision_id"], request.agent_id, request.action.value, request.target, amount, now_iso, exec_expiry, now_iso)
+                        (appr["decision_id"], request.agent_id, request.action.value, request.target, amount, action_hash, now_iso, exec_expiry, now_iso)
                     )
 
             # Commit the entire atomic authorize transaction

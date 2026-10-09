@@ -31,6 +31,7 @@ class CumulativeLedger:
                     target TEXT NOT NULL,
                     amount INTEGER NOT NULL,
                     status TEXT NOT NULL, -- RESERVED | EXECUTED | RELEASED
+                    request_hash TEXT, -- Made nullable for backward compatibility on migrations if needed, but we will pass it
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -52,11 +53,15 @@ class CumulativeLedger:
         action: str,
         target: str,
         amount: int,
+        request_hash: str = "",
         only_check: bool = False,
         conn: Optional[sqlite3.Connection] = None,
         bypass_soft_limit: bool = False,
     ) -> Tuple[DecisionOutcome, str, int, int]:
         import yaml
+        if amount <= 0:
+            return DecisionOutcome.BLOCK, "amount_must_be_positive", 0, 0
+
         # Lowest (safest) defaults
         soft_limit = 0
         hard_cap = 0
@@ -64,30 +69,26 @@ class CumulativeLedger:
         rapid_window_seconds = 600
         window_hours = 24
         
-        if not os.path.exists(self.limits_path):
-            # If missing, it's a complete fail-closed block for everything requiring limits
-            # But the defaults being 0 already achieves this for CREATE/UPDATE with amount>0
-            pass
-        else:
+        try:
+            if not os.path.exists(self.limits_path):
+                return DecisionOutcome.BLOCK, "limits_config_missing", amount, 0
             with open(self.limits_path, "r") as f:
                 limits_data = yaml.safe_load(f)
-                if limits_data and "limits" in limits_data:
-                    limits_list = limits_data["limits"]
-                    matched_limit = next((l for l in limits_list if l.get("action") == action and l.get("target") == target), None)
-                    
-                    if matched_limit:
-                        soft_limit = matched_limit.get("soft_limit", soft_limit)
-                        hard_cap = matched_limit.get("hard_cap", hard_cap)
-                        rapid_count = matched_limit.get("rapid_count", rapid_count)
-                        rapid_window_seconds = matched_limit.get("rapid_window", rapid_window_seconds)
-
-        """
-        Runs cumulative gate evaluation atomically.
-        If conn is provided, executes within the caller's transaction.
-        Returns: (decision, reason, current_total_with_amount, prior_rapid_count)
-        """
-        if amount <= 0:
-            return DecisionOutcome.ALLOW, "no_amount", 0, 0
+                if not limits_data or "limits" not in limits_data:
+                    return DecisionOutcome.BLOCK, "limits_config_invalid", amount, 0
+                limits_list = limits_data["limits"]
+                matched_limit = next((l for l in limits_list if l.get("action") == action and l.get("target") == target), None)
+                
+                if matched_limit:
+                    soft_limit = matched_limit.get("soft_limit", soft_limit)
+                    hard_cap = matched_limit.get("hard_cap", hard_cap)
+                    rapid_count = matched_limit.get("rapid_count", rapid_count)
+                    rapid_window_seconds = matched_limit.get("rapid_window_seconds", rapid_window_seconds)
+                    window_hours = matched_limit.get("window_hours", window_hours)
+                else:
+                    return DecisionOutcome.BLOCK, "no_limit_defined", amount, 0
+        except Exception:
+            return DecisionOutcome.BLOCK, "limits_config_unparsable", amount, 0
 
         now_utc = clock.now_utc()
         now_iso = now_utc.isoformat()
@@ -162,8 +163,8 @@ class CumulativeLedger:
                         conn.execute(
                             """
                             INSERT INTO cumulative_ledger 
-                            (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                            (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                             """,
                             (
                                 reservation_id,
@@ -171,6 +172,7 @@ class CumulativeLedger:
                                 action,
                                 target,
                                 amount,
+                                request_hash,
                                 now_iso,
                                 review_expiry_iso,
                                 now_iso,
@@ -193,8 +195,8 @@ class CumulativeLedger:
                 conn.execute(
                     """
                     INSERT INTO cumulative_ledger 
-                    (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                    (reservation_id, agent_id, action, target, amount, status, request_hash, created_at, expires_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?, ?)
                     """,
                     (
                         reservation_id,
@@ -202,6 +204,7 @@ class CumulativeLedger:
                         action,
                         target,
                         amount,
+                        request_hash,
                         now_iso,
                         reservation_expiry_iso,
                         now_iso,
