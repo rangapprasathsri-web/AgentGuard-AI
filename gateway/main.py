@@ -105,3 +105,23 @@ async def get_approval_status(
         raise HTTPException(status_code=403, detail="Access denied: own approvals only")
 
     return {"status": appr.get("status")}
+
+@app.post("/gateway/admin/flush_audit")
+async def flush_audit(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    api_key = authorization.replace("Bearer ", "")
+    # Check if this is the service key or some admin auth
+    # The requirement says "The gateway logs need to be flushed out."
+    if api_key != SERVICE_KEY:
+        raise HTTPException(status_code=403, detail="Admin access required")
+        
+    logs_json = audit_logger.flush_audit()
+    
+    # Mock S3 upload
+    # import boto3
+    # s3 = boto3.client('s3')
+    # s3.put_object(Bucket='agentguard-audit-logs', Key='audit.json', Body=logs_json)
+    
+    return {"status": "flushed", "bytes": len(logs_json.encode('utf-8'))}

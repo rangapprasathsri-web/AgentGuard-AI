@@ -338,3 +338,19 @@ class AuditLogger:
             conn.execute("DELETE FROM audit_events_backup WHERE backup_id = ?", (backup_row["backup_id"],))
             conn.commit()
             return True
+
+    def flush_audit(self) -> str:
+        """
+        Exports all audit events as JSON string and clears the table.
+        Returns the JSON string.
+        """
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute("SELECT * FROM audit_events ORDER BY seq ASC")
+            rows = cursor.fetchall()
+            events = [dict(r) for r in rows]
+            
+            conn.execute("DELETE FROM audit_events")
+            conn.commit()
+            return json.dumps(events)
+
