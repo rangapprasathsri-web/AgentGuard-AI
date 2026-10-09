@@ -286,22 +286,49 @@ def test_defect_5_guard_demo_routes():
 
 def test_defect_4_agent_env_isolation():
     """
-    Launch the agents process via subprocess with env -i and assert the three
-    secrets are absent from its environment.
+    Launch the agents process via run_all.sh pattern and read /proc/<pid>/environ
+    to assert the forbidden variable NAMES are absent in the agents process.
+    Also ensures the agents process cannot import code that reads those names.
     """
     import subprocess
+    import time
     import os
     
-    # We simulate what run_all.sh does:
-    # env -i PATH="$PATH" PYTHONPATH="." $(cat .env.agents | xargs) env
-    # And check the output for secrets
-    cmd = 'env -i PATH="$PATH" PYTHONPATH="." $(cat .env.agents | xargs) env'
+    # Start the agents process
+    cmd = 'env -i PATH="$PATH" PYTHONPATH="." bash -c \'set -a; source .env.agents; set +a; exec python3 -m uvicorn agents.main:app --port 8013 --host 127.0.0.1\''
+    proc = subprocess.Popen(cmd, shell=True)
+    
     try:
-        output = subprocess.check_output(cmd, shell=True, text=True)
-    except subprocess.CalledProcessError as e:
-        pytest.fail(f"env check failed: {e}")
+        # Give it a moment to start
+        time.sleep(2)
         
-    assert "SERVICE_KEY=" not in output, "SERVICE_KEY leaked into agent env"
-    assert "AUDIT_HMAC_KEY=" not in output, "AUDIT_HMAC_KEY leaked into agent env"
-    assert "TOOL_CREDENTIAL=" not in output, "TOOL_CREDENTIAL leaked into agent env"
-
+        # Read the real environment from /proc/<pid>/environ
+        try:
+            # Find python3 child if bash didn't exec
+            pgrep_out = subprocess.check_output(f"pgrep -P {proc.pid}", shell=True, text=True).strip()
+            python_pid = pgrep_out.split()[0]
+        except subprocess.CalledProcessError:
+            python_pid = proc.pid
+            
+        with open(f"/proc/{python_pid}/environ", "rb") as f:
+            env_data = f.read().split(b'\0')
+            
+        env_vars = {}
+        for item in env_data:
+            if b'=' in item:
+                k, v = item.split(b'=', 1)
+                env_vars[k.decode('utf-8', 'ignore')] = v.decode('utf-8', 'ignore')
+                
+        forbidden = ["SERVICE_KEY", "AUDIT_HMAC_KEY", "TOOL_CREDENTIAL"]
+        for fv in forbidden:
+            assert fv not in env_vars, f"Forbidden secret {fv} found in agent's /proc/environ!"
+            
+        # Verify agents cannot import guard.main which reads secrets
+        check_import_cmd = 'env -i PATH="$PATH" PYTHONPATH="." bash -c \'set -a; source .env.agents; set +a; exec python3 -c "import guard.main"\''
+        res = subprocess.run(check_import_cmd, shell=True, capture_output=True, text=True)
+        assert res.returncode != 0, "Agents process was able to import guard.main, which should fail closed due to missing secrets!"
+        assert "Startup failed: secret SERVICE_KEY is missing or empty" in res.stderr
+        
+    finally:
+        proc.terminate()
+        proc.wait(timeout=2)
