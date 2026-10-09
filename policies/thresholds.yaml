@@ -1,5 +1,5 @@
 thresholds:
-  allow_max: 44   # <45 is ALLOW
-  review_min: 45  # 45-69 is REVIEW
+  allow_max: 39   # <40 is ALLOW
+  review_min: 40  # 40-69 is REVIEW
   review_max: 69
   block_min: 70   # >=70 is BLOCK

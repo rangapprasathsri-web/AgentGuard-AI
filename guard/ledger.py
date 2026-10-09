@@ -144,7 +144,7 @@ class CumulativeLedger:
                 )
 
             if not bypass_soft_limit:
-                if new_total > soft_limit and prior_rapid_count >= rapid_count:
+                if rapid_count > 0 and new_total > soft_limit and prior_rapid_count >= rapid_count:
                     if should_close:
                         conn.rollback()
                     return (
