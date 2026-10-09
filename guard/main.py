@@ -142,11 +142,41 @@ class ConnectExchangeRequest(BaseModel):
     return_url: str
 
 
+from collections import defaultdict
+import time
+
+
+class RateLimiter:
+    def __init__(self, max_requests: int = 20, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.records = defaultdict(list)
+
+    def check(self, key: str) -> bool:
+        now = time.time()
+        self.records[key] = [t for t in self.records[key] if now - t < self.window_seconds]
+        if len(self.records[key]) >= self.max_requests:
+            return False
+        self.records[key].append(now)
+        return True
+
+
+rate_limiter_ip = RateLimiter(max_requests=30, window_seconds=60)
+rate_limiter_uid = RateLimiter(max_requests=20, window_seconds=60)
+
+
 @app.post("/tenants/register", response_model=TenantRegisterResponse)
 async def register_owner_tenant(
     req: OwnerTenantRegisterRequest,
+    request: Request,
     owner: Dict[str, Any] = Depends(sensitive_owner),
 ):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not rate_limiter_ip.check(client_ip):
+        raise HTTPException(status_code=429, detail="rate_limit_exceeded_ip")
+    if not rate_limiter_uid.check(owner["uid"]):
+        raise HTTPException(status_code=429, detail="rate_limit_exceeded_uid")
+
     owner_email = req.owner_email or owner["email"]
     tenant_id, api_key = tenant_store.register_tenant(
         company=req.company,
@@ -165,6 +195,7 @@ async def register_owner_tenant(
         approver_token=approver_token,
         gateway_url=gateway_url,
     )
+
 
 
 @app.get("/tenants/mine")
@@ -188,6 +219,9 @@ async def rotate_tenant_key(
     id: str,
     owner: Dict[str, Any] = Depends(sensitive_owner),
 ):
+    if not rate_limiter_uid.check(owner["uid"]):
+        raise HTTPException(status_code=429, detail="rate_limit_exceeded_uid")
+
     t = tenant_store.get_tenant(id)
     if not t:
         raise HTTPException(status_code=404, detail="tenant_not_found")
@@ -265,8 +299,15 @@ async def get_tenant_limits_endpoint(
 @app.post("/connect/code")
 async def create_connect_code(
     req: ConnectCodeRequest,
+    request: Request,
     owner: Dict[str, Any] = Depends(sensitive_owner),
 ):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not rate_limiter_ip.check(client_ip):
+        raise HTTPException(status_code=429, detail="rate_limit_exceeded_ip")
+    if not rate_limiter_uid.check(owner["uid"]):
+        raise HTTPException(status_code=429, detail="rate_limit_exceeded_uid")
+
     if req.tenant_id:
         t = tenant_store.get_tenant(req.tenant_id)
         if not t or t.get("owner_uid") != owner["uid"]:

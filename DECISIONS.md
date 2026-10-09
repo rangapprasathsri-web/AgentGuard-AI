@@ -42,3 +42,12 @@ This document records all decisions made where requirements were ambiguous, cont
 ### Decision 7: Threshold Decision (B2)
 - **Context**: `policies/thresholds.yaml` historically had 45, but README and older docs mentioned 40.
 - **Decision**: Keep the threshold at 40 (`allow_max: 39`, `review_min: 40`). This decision is now applied consistently across config and tests.
+
+### Decision 8: Three-Tier Authentication and Identity Model
+- **Context**: Incorporating Firebase Authentication for website owner identity without compromising execution gateway isolation or human approver security.
+- **Decision**: Three strictly segregated authentication domains:
+  1. **Website Owner**: Identified via Firebase Authentication (Google OAuth and Email/Password). Verified strictly server-side using Firebase Admin SDK (`verify_id_token`). Never trusted from client assertions. Sensitive actions (tenant registration, key rotation, key revocation) enforce `email_verified == True` and `check_revoked == True`.
+  2. **Tenant Access (Execution Gateway)**: Authorized exclusively via tenant API keys (`ag_live_...` / `X-API-Key`). The Gateway strictly rejects Firebase ID tokens (JWTs) with 401. Keys are shown only once upon generation and stored hashed (SHA-256).
+  3. **Human Approvers**: Authorized strictly via dedicated approver tokens. Owners do not inherit approver rights, and agents cannot approve their own requests.
+- **Fail-Closed Rationale**: Missing, expired, malformed tokens yield 401; unverified emails on sensitive operations yield 403; unreachable auth service yields 503; client credentials paths and raw tokens are never logged or committed.
+
