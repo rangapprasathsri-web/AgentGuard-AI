@@ -173,7 +173,7 @@ class GuardPipeline:
         # Step 9: Handle outcomes (Approvals / Reservations)
         approval_id: Optional[str] = None
         
-        if final_decision == DecisionOutcome.ALLOW and amount > 0:
+        if final_decision in (DecisionOutcome.ALLOW, DecisionOutcome.REVIEW) and amount > 0:
             cum_decision, cum_reason, _, _ = self.ledger.check_and_reserve(
                 reservation_id=decision_id,
                 agent_id=request.agent_id,
@@ -182,7 +182,8 @@ class GuardPipeline:
                 amount=amount,
                 only_check=False,
             )
-            if cum_decision != DecisionOutcome.ALLOW:
+            # Escalate if cumulative decision is more severe
+            if severity_rank[cum_decision] > severity_rank[final_decision]:
                 final_decision = cum_decision
                 decision_source = "cumulative_gate"
                 factors.append(cum_reason)

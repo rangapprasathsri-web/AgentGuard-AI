@@ -155,8 +155,32 @@ class CumulativeLedger:
                     )
 
                 if new_total > soft_limit:
-                    if should_close:
+                    if not only_check:
+                        # For REVIEW, the approval queue keeps it alive for 10m.
+                        # So the reservation must match the 10m expiry.
+                        review_expiry_iso = (now_utc + timedelta(seconds=600)).isoformat()
+                        conn.execute(
+                            """
+                            INSERT INTO cumulative_ledger 
+                            (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                            """,
+                            (
+                                reservation_id,
+                                agent_id,
+                                action,
+                                target,
+                                amount,
+                                now_iso,
+                                review_expiry_iso,
+                                now_iso,
+                            ),
+                        )
+                        if should_close:
+                            conn.commit()
+                    elif should_close:
                         conn.rollback()
+                        
                     return (
                         DecisionOutcome.REVIEW,
                         f"soft_limit_exceeded: total {new_total} > {soft_limit}",

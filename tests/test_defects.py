@@ -280,9 +280,66 @@ def test_defect_5_guard_demo_routes():
     resp = client.post("/audit/demo/tamper", headers={"X-Role": "agent"})
     assert resp.status_code == 403
     
-    resp_admin = client.post("/audit/demo/tamper", headers={"X-Role": "admin", "X-Service-Key": "sk"})
+    resp_admin = client.post("/audit/demo/tamper", headers={"X-Role": "admin", "X-Service-Key": "sk_valid_service_key_16bytes"})
     assert resp_admin.status_code == 200
 
+def test_defect_5_allow_to_review_flip(tmp_path):
+    """
+    Test that when evaluation results in ALLOW (or REVIEW), but reservation returns a more severe outcome,
+    the pipeline escalates the decision. Specifically, ALLOW to REVIEW creates an approval.
+    """
+    from guard.pipeline import GuardPipeline
+    from guard.ledger import CumulativeLedger
+    from common.schemas import ActionRequest, ActionType, Source, SourceType, DecisionOutcome
+    
+    db_file = str(tmp_path / "flip_ledger.db")
+    limits_path = tmp_path / "limits.yaml"
+    limits_path.write_text("""
+limits:
+  - action: CREATE
+    target: payments_api
+    soft_limit: 10000
+    hard_cap: 50000
+""")
+    ledger = CumulativeLedger(db_path=db_file, limits_path=str(limits_path))
+    pipeline = GuardPipeline(service_key="test_svc", ledger=ledger)
+    
+    # 1. First request takes 6000. It should ALLOW and reserve 6000.
+    req1 = ActionRequest(
+        agent_id="finance-agent-01", action=ActionType.CREATE, target="payments_api",
+        params={"amount": 6000, "customer_id": "c_123"}, source=Source(type=SourceType.USER)
+    )
+    res1 = pipeline.evaluate(req1)
+    assert res1.decision == DecisionOutcome.ALLOW
+    
+    # 2. To simulate the race condition, we monkeypatch check_and_reserve
+    # to return REVIEW only when only_check=False.
+    
+    original_check = ledger.check_and_reserve
+    def mock_check(reservation_id, agent_id, action, target, amount, only_check=False, conn=None, bypass_soft_limit=False):
+        if only_check:
+            # Fake ALLOW during evaluation
+            return DecisionOutcome.ALLOW, "mocked_allow", 6000, 0
+        else:
+            # Fallback to real logic which will return REVIEW because 12000 > 10000
+            return original_check(reservation_id, agent_id, action, target, amount, only_check, conn, bypass_soft_limit)
+            
+    ledger.check_and_reserve = mock_check
+    
+    req2 = ActionRequest(
+        agent_id="finance-agent-01", action=ActionType.CREATE, target="payments_api",
+        params={"amount": 6000, "customer_id": "c_124"}, source=Source(type=SourceType.USER)
+    )
+    res2 = pipeline.evaluate(req2)
+    
+    # It should have flipped to REVIEW and created an approval
+    assert res2.decision == DecisionOutcome.REVIEW
+    assert res2.approval_id is not None
+    
+    # Verify the reservation was saved for the REVIEW!
+    with ledger._get_connection() as conn:
+        row = conn.execute("SELECT SUM(amount) as s FROM cumulative_ledger WHERE status = 'RESERVED'").fetchone()
+        assert int(row["s"] or 0) == 12000
 
 def test_defect_4_agent_env_isolation():
     """
