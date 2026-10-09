@@ -180,24 +180,70 @@ def test_defect_7_authorize_agent_id_mismatch(tmp_path):
     # Approve it
     approvals.decide(appr_id, "APPROVE", "cfo")
     
-    # Try to authorize with a different agent_id but same hash?
-    # Wait, the action hash includes agent_id. If we change agent_id, hash changes.
-    # The requirement says: verify approval.agent_id == request.agent_id BEFORE any voiding.
-    # If the hash mismatch voiding is first, it will void it. 
-    # We want it to just BLOCK and NOT void the approval.
-    req_malicious = ActionRequest(
-        agent_id="hacker-agent-99",
+    # Submit with wrong agent
+    req_wrong = ActionRequest(
+        agent_id="finance-agent-02",
         action=ActionType.CREATE,
         target="payments_api",
         params={"amount": 40000, "customer_id": "c1"},
         source=Source(type=SourceType.USER),
     )
-    dec, reason, _, _ = pipeline.authorize(req_malicious, appr_id)
-    assert dec == DecisionOutcome.BLOCK
     
-    # Ensure it wasn't voided
-    appr_doc = approvals.get_approval(appr_id)
-    assert appr_doc["status"] == "APPROVED"
+    dec, reason, _, _ = pipeline.authorize(req_wrong, appr_id)
+    assert dec == DecisionOutcome.BLOCK
+    assert "agent_id_mismatch" in reason
+    
+    # Verify approval is NOT voided
+    appr = approvals.get_approval(appr_id)
+    assert appr["status"] == "APPROVED"
+
+
+def test_defect_7_signature_verification_mutation(tmp_path):
+    """
+    Prove that modifying any single byte of a 9500 approval action_hash (simulate a replay of a different payload)
+    produces an immediate rejection and is never sent to the tool.
+    """
+    db_file = str(tmp_path / "defect_7_mut.db")
+    approvals = ApprovalManager(db_path=db_file)
+    pipeline = GuardPipeline(service_key="test_svc", approval_manager=approvals, ledger=CumulativeLedger(db_path=db_file))
+    
+    # Get a REVIEW outcome to create an approval
+    # 9500 might be ALLOW by default (soft limit 10000 for finance-agent), so we force REVIEW by simulating an analyzer hit or just by setting a lower soft limit.
+    limits_path = tmp_path / "limits.yaml"
+    limits_path.write_text("limits:\n  - action: CREATE\n    target: payments_api\n    soft_limit: 5000\n    hard_cap: 50000\n")
+    ledger = CumulativeLedger(db_path=db_file, limits_path=str(limits_path))
+    pipeline = GuardPipeline(service_key="test_svc", approval_manager=approvals, ledger=ledger)
+    
+    req_valid = ActionRequest(
+        agent_id="finance-agent-01",
+        action=ActionType.CREATE,
+        target="payments_api",
+        params={"amount": 9500, "customer_id": "c1"},
+        source=Source(type=SourceType.USER),
+    )
+    resp1 = pipeline.evaluate(req_valid)
+    assert resp1.decision == DecisionOutcome.REVIEW
+    appr_id = resp1.approval_id
+    
+    # Approve it
+    approvals.decide(appr_id, "APPROVE", "cfo")
+    
+    # Modifying any byte of the payload: 9500 -> 9501
+    req_mutated = ActionRequest(
+        agent_id="finance-agent-01",
+        action=ActionType.CREATE,
+        target="payments_api",
+        params={"amount": 9501, "customer_id": "c1"},
+        source=Source(type=SourceType.USER),
+    )
+    
+    dec, reason, _, _ = pipeline.authorize(req_mutated, appr_id)
+    assert dec == DecisionOutcome.BLOCK
+    assert reason == "hash_mismatch"
+    
+    # Verify the approval was voided (so it cannot be used)
+    appr = approvals.get_approval(appr_id)
+    assert appr["status"] == "VOIDED"
 
 
 def test_defect_8_canonicalization_float_payload():
