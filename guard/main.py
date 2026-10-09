@@ -89,6 +89,11 @@ def require_role(allowed_roles: List[str], x_role: Optional[str] = Header(None))
     return x_role
 
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
+
 # -------------------------------------------------------------
 # Service-Only Endpoints (Gateway -> Guard)
 # -------------------------------------------------------------
