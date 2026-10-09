@@ -9,7 +9,7 @@ class GuardClient:
         self,
         guard_url: Optional[str] = None,
         service_key: Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: float = 5.0,
     ):
         self.guard_url = guard_url or os.getenv("GUARD_URL", "http://localhost:8001")
         self.service_key = service_key or os.getenv("SERVICE_KEY")

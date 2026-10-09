@@ -55,6 +55,41 @@ def test_scenario_10_fail_closed_guard_unreachable(test_enforcer):
 
     asyncio.run(run_test())
 
+def test_defect_8_guard_timeout(test_enforcer):
+    """
+    Ensure that if the gateway takes > 5 seconds to contact the guard,
+    it fails closed (does not execute the tool).
+    """
+    import asyncio
+    import httpx
+    enforcer, audit_logger = test_enforcer
+    # Set timeout to exactly 5.0 to verify it
+    enforcer.guard_client.timeout = 5.0
+    
+    async def mock_post(*args, **kwargs):
+        raise httpx.TimeoutException("Timeout after 5.0s")
+        
+    async def run_test():
+        body = {
+            "agent_id": "database-agent-01",
+            "action": "READ",
+            "target": "customer_orders_db",
+            "params": {"record_count": 1},
+            "source": {"type": "user"},
+        }
+
+        with patch("httpx.AsyncClient.post", side_effect=mock_post):
+            status_code, resp = await enforcer.execute_action(
+                raw_body=body,
+                actor="database-agent-01",
+                role="agent",
+            )
+            
+            assert status_code == 503
+            assert resp["status"] == "denied_fail_closed"
+            assert resp["reason"] == "guard_unreachable"
+            
+    asyncio.run(run_test())
 
 def test_scenario_12_direct_tool_access_permission_error():
     # Calling tool without valid credential raises PermissionError (Invariant I1)
