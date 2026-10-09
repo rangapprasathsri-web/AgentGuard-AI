@@ -35,3 +35,6 @@ This document records all decisions made where requirements were ambiguous, cont
 - **Context**: Host system environment does not have GNU `make` installed in system PATH.
 - **Decision**: Provided standard POSIX `Makefile` as required, and also created an executable `./make` runner that supports `./make seed`, `./make test`, and `./make demo`.
 
+
+### Phase A2: test_invariant_i10
+- **Decision:** Changed test_invariant_i10 to assert BLOCK instead of REVIEW for an amount exceeding the hard cap (250,000 > 200,000). Per invariant I4, the most severe check wins, so exceeding the hard cap must yield BLOCK regardless of the soft limits. The test was stale.

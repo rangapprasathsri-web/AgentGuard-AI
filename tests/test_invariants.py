@@ -194,7 +194,7 @@ def test_invariant_i10_cumulative_limits_atomic_and_no_inflation(inv_setup):
         source=Source(type=SourceType.USER),
     )
     resp = pipeline.evaluate(req_blocked)
-    assert resp.decision == DecisionOutcome.REVIEW
+    assert resp.decision == DecisionOutcome.BLOCK
 
     # Blocked request must NOT inflate executed total
     with ledger._get_connection() as conn:

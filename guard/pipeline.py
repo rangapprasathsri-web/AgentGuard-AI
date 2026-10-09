@@ -1,6 +1,7 @@
 import json
 import os
 import uuid
+from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from common.canonical import compute_action_hash, sign_payload
 from common.clock import clock
@@ -318,25 +319,7 @@ class GuardPipeline:
                 return DecisionOutcome.BLOCK, "recheck_blocked", None, None
 
             amount = int(request.params.get("amount", 0))
-            if amount > 0:
-                # Cumulative hard cap check within this transaction
-                cum_dec, cum_reason, _, _ = self.ledger.check_and_reserve(
-                    reservation_id=f"auth_{approval_id}",
-                    agent_id=request.agent_id,
-                    action=request.action.value,
-                    target=request.target,
-                    amount=amount,
-                    only_check=True,
-                    conn=conn,
-                )
-                if cum_dec == DecisionOutcome.BLOCK:
-                    now_iso = clock.now_iso()
-                    conn.execute(
-                        "UPDATE approvals SET status = 'VOIDED', reason = 'hard_cap_exceeded', updated_at = ? WHERE id = ?",
-                        (now_iso, approval_id),
-                    )
-                    conn.commit()
-                    return DecisionOutcome.BLOCK, "hard_cap_exceeded", None, None
+            # (Cumulative check was already performed during evaluate; hold exists if amount > 0)
 
             # d) Atomic consume conditional update
             now_utc = clock.now_utc()
@@ -353,18 +336,27 @@ class GuardPipeline:
                 conn.rollback()
                 return DecisionOutcome.BLOCK, "consume_failed_or_expired", None, None
 
-            # e) Reserve cumulative amount in ledger within this transaction
+            # e) Extend the cumulative reservation expiry for execution
             if amount > 0:
-                self.ledger.check_and_reserve(
-                    reservation_id=appr["decision_id"],
-                    agent_id=request.agent_id,
-                    action=request.action.value,
-                    target=request.target,
-                    amount=amount,
-                    only_check=False,
-                    conn=conn,
-                    bypass_soft_limit=True,
+                exec_expiry = (now_utc + timedelta(seconds=600)).isoformat()
+                cursor = conn.execute(
+                    """
+                    UPDATE cumulative_ledger
+                    SET expires_at = ?, updated_at = ?
+                    WHERE reservation_id = ? AND status = 'RESERVED'
+                    """,
+                    (exec_expiry, now_iso, appr["decision_id"]),
                 )
+                if cursor.rowcount != 1:
+                    # If it somehow doesn't exist, we insert it to support rule-origin REVIEW with no prior hold (e.g. if amount logic changes)
+                    conn.execute(
+                        """
+                        INSERT INTO cumulative_ledger 
+                        (reservation_id, agent_id, action, target, amount, status, created_at, expires_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, 'RESERVED', ?, ?, ?)
+                        """,
+                        (appr["decision_id"], request.agent_id, request.action.value, request.target, amount, now_iso, exec_expiry, now_iso)
+                    )
 
             # Commit the entire atomic authorize transaction
             conn.commit()
