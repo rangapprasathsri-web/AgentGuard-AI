@@ -18,3 +18,13 @@ clean:
 	@echo "Cleaning temporary files and databases..."
 	rm -f tools.db guard.db audit.db
 	find . -type d -name "__pycache__" -exec rm -rf {} +
+
+scan:
+	@echo "Scanning for secrets..."
+	python3 scripts/secret_scan.py
+
+package:
+	@echo "Packaging codebase..."
+	rm -f release.zip
+	zip -r release.zip . -x "*.env*" "*.db*" "*api keys.docx*" "*/node_modules/*" "*/.git/*" "*/.pytest_cache/*" "*__pycache__/*"
+

@@ -23,6 +23,16 @@ elif target in ["clean"]:
     for f in ["tools.db", "guard.db", "audit.db"]:
         if os.path.exists(f):
             os.remove(f)
+elif target in ["scan"]:
+    print("Scanning for secrets...")
+    res = subprocess.run(["python3", "scripts/secret_scan.py"])
+    sys.exit(res.returncode)
+elif target in ["package"]:
+    print("Packaging codebase...")
+    if os.path.exists("release.zip"):
+        os.remove("release.zip")
+    res = subprocess.run(["zip", "-r", "release.zip", ".", "-x", "*.env*", "*.db*", "*api keys.docx*", "*/node_modules/*", "*/.git/*", "*/.pytest_cache/*", "*__pycache__/*"])
+    sys.exit(res.returncode)
 else:
-    print(f"Unknown target '{target}'. Available: seed, test, demo, clean")
+    print(f"Unknown target '{target}'. Available: seed, test, demo, clean, scan, package")
     sys.exit(1)
