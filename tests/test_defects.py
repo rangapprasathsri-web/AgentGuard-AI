@@ -262,9 +262,8 @@ def test_defect_5_guard_demo_routes():
     """
     from fastapi.testclient import TestClient
     
-    # We must set env vars before importing guard.main
-    os.environ["SERVICE_KEY"] = "sk"
-    os.environ["AUDIT_HMAC_KEY"] = "ak"
+    os.environ["SERVICE_KEY"] = "sk_valid_service_key_16bytes"
+    os.environ["AUDIT_HMAC_KEY"] = "ak_valid_hmac_key_16bytes"
     os.environ["DEMO_MODE"] = "true"
     
     import importlib

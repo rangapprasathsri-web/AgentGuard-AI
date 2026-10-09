@@ -22,11 +22,11 @@ from guard.registries import AgentRegistry, ResourceRegistry
 from guard.risk import RiskEngine
 from guard.rules import HardRulesEngine
 
+from common.secrets import get_validated_secret
+
 # Verify required secrets at startup (Fail closed)
-SERVICE_KEY = os.getenv("SERVICE_KEY")
-AUDIT_HMAC_KEY = os.getenv("AUDIT_HMAC_KEY")
-if not SERVICE_KEY or not AUDIT_HMAC_KEY:
-    raise RuntimeError("Startup failed: required secrets missing (fail closed)")
+SERVICE_KEY = get_validated_secret("SERVICE_KEY")
+AUDIT_HMAC_KEY = get_validated_secret("AUDIT_HMAC_KEY")
 
 # Load components
 agent_reg = AgentRegistry()

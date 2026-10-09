@@ -6,12 +6,12 @@ from common.audit import AuditLogger
 from gateway.enforcement import GatewayEnforcer
 from gateway.guard_client import GuardClient
 
+from common.secrets import get_validated_secret
+
 # Fail closed if secrets missing
-TOOL_CREDENTIAL = os.getenv("TOOL_CREDENTIAL")
-SERVICE_KEY = os.getenv("SERVICE_KEY")
-AUDIT_HMAC_KEY = os.getenv("AUDIT_HMAC_KEY")
-if not TOOL_CREDENTIAL or not SERVICE_KEY or not AUDIT_HMAC_KEY:
-    raise RuntimeError("Startup failed: required gateway secrets missing (fail closed)")
+TOOL_CREDENTIAL = get_validated_secret("TOOL_CREDENTIAL")
+SERVICE_KEY = get_validated_secret("SERVICE_KEY")
+AUDIT_HMAC_KEY = get_validated_secret("AUDIT_HMAC_KEY")
 
 audit_logger = AuditLogger(db_path="audit.db", hmac_key=AUDIT_HMAC_KEY)
 guard_client = GuardClient(service_key=SERVICE_KEY)
