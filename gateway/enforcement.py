@@ -53,7 +53,7 @@ class GatewayEnforcer:
                 event_type="security_signal",
                 payload={"signal": "invalid_request", "body_hash": body_hash, "error": str(e)},
             )
-            return 400, {"error": "invalid_request", "detail": str(e)}
+            return 400, {"error": "invalid_request", "detail": "Invalid request payload"}
 
         # 3. Compute action hash independently at Gateway
         computed_hash = compute_action_hash(
@@ -76,7 +76,7 @@ class GatewayEnforcer:
                 event_type="security_signal",
                 payload={"signal": err_type or "guard_unreachable", "action_hash": computed_hash},
             )
-            return 503, {"status": "denied_fail_closed", "reason": err_type or "guard_unreachable"}
+            return 503, {"status": "denied_fail_closed", "reason": err_type if err_type == "bad_signature" else "guard_unreachable"}
 
         # Verify action_hash in Guard response equals Gateway's computed hash
         resp_hash = guard_resp.get("action_hash")
@@ -137,8 +137,12 @@ class GatewayEnforcer:
                     "action_hash": computed_hash,
                 }
             except Exception as e:
+                self.audit_logger.append_event(
+                    event_type="security_signal",
+                    payload={"signal": "execution_failed", "error": str(e), "decision_id": decision_id},
+                )
                 await self.guard_client.confirm(decision_id, "failed")
-                return 500, {"status": "execution_failed", "error": str(e)}
+                return 500, {"status": "execution_failed", "error": "Internal execution error"}
 
         # Case B: REVIEW -> pending approval
         elif decision == "REVIEW":
