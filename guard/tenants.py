@@ -27,7 +27,24 @@ class TenantStore:
                     company TEXT NOT NULL,
                     owner_email TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    owner_uid TEXT DEFAULT NULL
+                )
+                """
+            )
+            # Run migration if owner_uid column does not exist
+            cursor = conn.execute("PRAGMA table_info(tenants)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "owner_uid" not in columns:
+                conn.execute("ALTER TABLE tenants ADD COLUMN owner_uid TEXT DEFAULT NULL")
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS owners (
+                    uid TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_login_at TEXT NOT NULL
                 )
                 """
             )
@@ -93,7 +110,7 @@ class TenantStore:
             if not cursor.fetchone():
                 now = datetime.now(timezone.utc).isoformat()
                 conn.execute(
-                    "INSERT INTO tenants (id, company, owner_email, status, created_at) VALUES ('demo', 'Demo Company', 'demo@agentguard.ai', 'ACTIVE', ?)",
+                    "INSERT INTO tenants (id, company, owner_email, status, created_at, owner_uid) VALUES ('demo', 'Demo Company', 'demo@agentguard.ai', 'ACTIVE', ?, NULL)",
                     (now,)
                 )
                 conn.execute(
@@ -101,6 +118,31 @@ class TenantStore:
                 )
             
             conn.commit()
+
+    def upsert_owner(self, uid: str, email: str) -> None:
+        """Upsert owner into owners table on authenticated call."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO owners (uid, email, created_at, last_login_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(uid) DO UPDATE SET
+                    email = excluded.email,
+                    last_login_at = excluded.last_login_at
+                """,
+                (uid, email, now, now)
+            )
+            conn.commit()
+
+    def get_owner(self, uid: str) -> Optional[Dict[str, Any]]:
+        """Fetch owner by uid."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM owners WHERE uid = ?", (uid,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
 
     @staticmethod
     def generate_api_key() -> Tuple[str, str, str]:
@@ -122,7 +164,7 @@ class TenantStore:
             conn.commit()
         return raw_key
 
-    def register_tenant(self, company: str, owner_email: str) -> Tuple[str, str]:
+    def register_tenant(self, company: str, owner_email: str, owner_uid: Optional[str] = None) -> Tuple[str, str]:
         """
         Registers a new tenant.
         Returns (tenant_id, api_key)
@@ -139,8 +181,8 @@ class TenantStore:
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
-                    "INSERT INTO tenants (id, company, owner_email, status, created_at) VALUES (?, ?, ?, 'ACTIVE', ?)",
-                    (tenant_id, company, owner_email, now)
+                    "INSERT INTO tenants (id, company, owner_email, status, created_at, owner_uid) VALUES (?, ?, ?, 'ACTIVE', ?, ?)",
+                    (tenant_id, company, owner_email, now, owner_uid)
                 )
                 conn.execute(
                     "INSERT INTO tenant_api_keys (tenant_id, key_hash, key_prefix, created_at) VALUES (?, ?, ?, ?)",
@@ -160,6 +202,51 @@ class TenantStore:
                 raise e
             
         return tenant_id, raw_key
+
+    def get_tenant(self, tenant_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch tenant record by id."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+        return None
+
+    def get_tenants_by_owner(self, owner_uid: str) -> list:
+        """Fetch all tenants belonging to a specific owner uid."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, company, owner_email, status, created_at, owner_uid FROM tenants WHERE owner_uid = ?",
+                (owner_uid,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def rotate_api_key(self, tenant_id: str) -> str:
+        """Revokes all active API keys for tenant and generates a new one. Returns raw_key."""
+        raw_key, key_hash, key_prefix = self.generate_api_key()
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE tenant_api_keys SET revoked_at = ? WHERE tenant_id = ? AND revoked_at IS NULL",
+                (now, tenant_id)
+            )
+            conn.execute(
+                "INSERT INTO tenant_api_keys (tenant_id, key_hash, key_prefix, created_at) VALUES (?, ?, ?, ?)",
+                (tenant_id, key_hash, key_prefix, now)
+            )
+            conn.commit()
+        return raw_key
+
+    def revoke_api_key(self, tenant_id: str) -> None:
+        """Revokes all active API keys for tenant."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                "UPDATE tenant_api_keys SET revoked_at = ? WHERE tenant_id = ? AND revoked_at IS NULL",
+                (now, tenant_id)
+            )
+            conn.commit()
+
 
     def verify_api_key(self, raw_key: str) -> Optional[str]:
         """Returns tenant_id if valid, None otherwise. Uses constant time compare implicitly via hash."""
