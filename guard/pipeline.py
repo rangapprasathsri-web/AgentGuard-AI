@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from common.canonical import compute_action_hash, sign_payload
@@ -76,8 +77,13 @@ class GuardPipeline:
         amount = int(request.params.get("amount", 0))
         cum_decision = DecisionOutcome.ALLOW
         cum_reason = "within_limits"
-        if amount > 0:
-            pass # Cumulative gate checked at the end in final ALLOW path
+        
+        if not os.path.exists(self.ledger.limits_path):
+            if request.action in (ActionType.CREATE, ActionType.UPDATE):
+                cum_decision = DecisionOutcome.BLOCK
+                cum_reason = "missing_limits_file"
+        elif amount > 0:
+            pass # Cumulative gate checked at the end in final ALLOW/REVIEW path
 
         # RAG Policy Evidence retrieval (Section 10)
         rag_chunks: List[str] = []

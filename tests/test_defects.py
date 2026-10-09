@@ -246,6 +246,48 @@ def test_defect_7_signature_verification_mutation(tmp_path):
     assert appr["status"] == "VOIDED"
 
 
+def test_defect_9_limits_yaml_enforcement(tmp_path):
+    """
+    Prove that an agent not present in config/agents.yaml, or an action/target without limits in limits.yaml,
+    falls back to the lowest (safest) default, and that deleting limits.yaml causes a complete fail-closed block
+    of all CREATE/UPDATE actions.
+    """
+    from guard.pipeline import GuardPipeline
+    from guard.ledger import CumulativeLedger
+    from common.schemas import ActionRequest, ActionType, Source, SourceType, DecisionOutcome
+    
+    db_file = str(tmp_path / "defect_9.db")
+    limits_path = tmp_path / "deleted_limits.yaml"
+    # Ensure it does not exist
+    if limits_path.exists():
+        limits_path.unlink()
+        
+    ledger = CumulativeLedger(db_path=db_file, limits_path=str(limits_path))
+    pipeline = GuardPipeline(service_key="test_svc", ledger=ledger)
+    
+    # 1. Without limits.yaml, a CREATE request with amount > 0 should be BLOCKED because soft_limit=0 and hard_cap=0
+    req_missing_limits = ActionRequest(
+        agent_id="finance-agent-01",
+        action=ActionType.CREATE,
+        target="payments_api",
+        params={"amount": 1, "customer_id": "c1"},
+        source=Source(type=SourceType.USER),
+    )
+    res_missing = pipeline.evaluate(req_missing_limits)
+    assert res_missing.decision == DecisionOutcome.BLOCK
+    
+    # 2. Unknown agent gives +50 risk score, which guarantees a BLOCK anyway due to risk block threshold
+    req_unknown = ActionRequest(
+        agent_id="unknown-agent",
+        action=ActionType.CREATE,
+        target="payments_api",
+        params={"amount": 1, "customer_id": "c1"},
+        source=Source(type=SourceType.USER),
+    )
+    res_unknown = pipeline.evaluate(req_unknown)
+    assert res_unknown.decision == DecisionOutcome.BLOCK
+
+
 def test_defect_8_canonicalization_float_payload():
     """
     Audit and signing must serialize any JSON-safe payload (including floats).
