@@ -311,3 +311,26 @@ def test_gateway_accepts_valid_api_key_via_x_api_key_header(guard_client, gatewa
     # Auth passed, role check rejected
     assert gw_resp.status_code == 403
     assert gw_resp.json()["detail"]["error"] == "forbidden_role_or_actor_mismatch"
+
+
+def test_owner_can_get_tenant_limits(guard_client):
+    set_active_owner(OWNER_A_UID, OWNER_A_EMAIL, verified=True)
+    resp = guard_client.post(
+        "/tenants/register",
+        json={"company": "Limits Corp"},
+        headers={"Authorization": "Bearer token_a"}
+    )
+    tenant_id = resp.json()["tenant_id"]
+
+    # Owner A gets limits -> 200
+    lim_resp = guard_client.get(f"/tenants/{tenant_id}/limits", headers={"Authorization": "Bearer token_a"})
+    assert lim_resp.status_code == 200
+    data = lim_resp.json()
+    assert data["currency"] == "INR"
+    assert data["max_single_refund"] > 0
+
+    # Owner B gets Owner A's limits -> 403
+    set_active_owner(OWNER_B_UID, OWNER_B_EMAIL, verified=True)
+    bad_resp = guard_client.get(f"/tenants/{tenant_id}/limits", headers={"Authorization": "Bearer token_b"})
+    assert bad_resp.status_code == 403
+

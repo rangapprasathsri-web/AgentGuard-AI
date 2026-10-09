@@ -241,6 +241,27 @@ async def revoke_tenant_key(
     return {"tenant_id": id, "status": "revoked"}
 
 
+@app.get("/tenants/{id}/limits")
+async def get_tenant_limits_endpoint(
+    id: str,
+    owner: Dict[str, Any] = Depends(current_owner),
+):
+    t = tenant_store.get_tenant(id)
+    if not t:
+        raise HTTPException(status_code=404, detail="tenant_not_found")
+    if t.get("owner_uid") != owner["uid"]:
+        raise HTTPException(status_code=403, detail="forbidden_tenant_owner_mismatch")
+    limits = tenant_store.get_tenant_limits(id)
+    return limits or {
+        "tenant_id": id,
+        "max_single_refund": 50000,
+        "daily_cumulative_cap": 200000,
+        "payment_review_threshold": 10000,
+        "payment_hard_block": 50000,
+        "currency": "INR",
+    }
+
+
 @app.post("/connect/code")
 async def create_connect_code(
     req: ConnectCodeRequest,

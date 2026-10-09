@@ -315,3 +315,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBackToHome, onSuccess, ret
     </div>
   );
 };
+
+export default AuthPage;
+
