@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>AgentGuard AI — Execution Governance for Autonomous AI</title>
+    <meta
+      name="description"
+      content="Execution-authorization and governance layer for autonomous AI agents. Verified before execution. Don't trust the agent. Verify the action."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" type="image/svg+xml" href="/logo-mark.svg" />
+    <script>
+      (function() {
+        try {
+          var q = new URLSearchParams(window.location.search).get('theme');
+          var s = localStorage.getItem('agentguard-theme');
+          var theme = (q === 'dark' || q === 'light') ? q : (s === 'dark' ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+          if (theme === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="bg-page text-ink selection:bg-brand-soft selection:text-brand-ink">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

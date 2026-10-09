@@ -33,12 +33,21 @@ htmlcov/
 dashboard/node_modules/
 dashboard/dist/
 dashboard/.vite/
+landing/node_modules/
+landing/dist/
+landing/.vite/
 
 # SQLite databases generated at runtime
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Firebase credentials and service accounts
+*firebase*credentials*.json
+*service_account*.json
+*serviceAccount*.json
+*.json.key
 
 # OS & IDE
 .DS_Store

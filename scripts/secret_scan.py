@@ -8,6 +8,8 @@ SECRET_PATTERNS = [
     re.compile(r"sk-[a-zA-Z0-9]{20,}"),               # Common API key format
     re.compile(r"\b[0-9a-fA-F]{32,}\b"),              # 32+ hex chars (hashes, some keys)
     re.compile(r"ak-[a-zA-Z0-9]{16,}"),               # Custom ak- keys
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), # Private keys
+    re.compile(r'"private_key":\s*"[^"]+"'),           # Service account private key field
 ]
 
 # Patterns to ignore based on user request and normal project files
