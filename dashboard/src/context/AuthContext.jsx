@@ -6,6 +6,7 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
+  getRedirectResult,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -26,6 +27,11 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
       return;
     }
+
+    // Process redirect result if returning from a redirect sign-in
+    getRedirectResult(auth).catch((err) => {
+      console.warn('[AgentGuard Firebase] Redirect result:', err);
+    });
 
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);

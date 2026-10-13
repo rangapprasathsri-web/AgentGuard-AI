@@ -20,9 +20,11 @@ export const AuthPage = ({ onSuccess }) => {
   const [notice, setNotice] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  if (user && onSuccess) {
-    onSuccess();
-  }
+  useEffect(() => {
+    if (user && onSuccess) {
+      onSuccess();
+    }
+  }, [user, onSuccess]);
 
   const validate = () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

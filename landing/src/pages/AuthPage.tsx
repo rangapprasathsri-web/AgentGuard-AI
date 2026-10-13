@@ -27,14 +27,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onBackToHome, onSuccess, ret
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // If already signed in
-  if (user) {
-    if (onSuccess) {
-      onSuccess();
-    } else if (returnUrl) {
-      window.location.href = returnUrl;
+  // If already signed in, navigate safely inside useEffect
+  React.useEffect(() => {
+    if (user) {
+      if (onSuccess) {
+        onSuccess();
+      } else if (returnUrl) {
+        window.location.href = returnUrl;
+      }
     }
-  }
+  }, [user, onSuccess, returnUrl]);
 
   const validate = () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {

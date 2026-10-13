@@ -76,7 +76,7 @@ const LandingContent: React.FC = () => {
   };
 
   if (currentView === 'auth') {
-    return <AuthPage onBackToHome={navigateToLanding} />;
+    return <AuthPage onBackToHome={navigateToLanding} onSuccess={navigateToLanding} />;
   }
 
   return (

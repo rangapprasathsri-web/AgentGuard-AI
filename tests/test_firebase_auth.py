@@ -145,3 +145,24 @@ def test_sensitive_action_requires_verified_email():
     resp = client.post("/test/sensitive", headers={"Authorization": "Bearer token_verified"})
     assert resp.status_code == 200
     assert resp.json()["uid"] == "verified_user_789"
+
+
+def test_default_verify_id_token_rejects_malformed_token():
+    from auth.firebase_auth import default_verify_id_token
+    reset_token_verifier()
+    with pytest.raises(HTTPException) as exc_info:
+        default_verify_id_token("not-a-token")
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "invalid_or_expired_token"
+
+
+def test_default_verify_id_token_rejects_non_rs256():
+    import jwt
+    from auth.firebase_auth import default_verify_id_token
+    reset_token_verifier()
+    # HS256 token should be rejected
+    hs256_token = jwt.encode({"sub": "user123"}, "secret_key_with_at_least_32_bytes_len", algorithm="HS256")
+    with pytest.raises(HTTPException) as exc_info:
+        default_verify_id_token(hs256_token)
+    assert exc_info.value.status_code == 401
+

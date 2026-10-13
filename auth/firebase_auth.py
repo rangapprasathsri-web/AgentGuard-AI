@@ -16,6 +16,97 @@ _override_verifier: Optional[VerifierFunc] = None
 _firebase_app_initialized = False
 
 
+_cached_certs: Dict[str, str] = {}
+_certs_expiry: float = 0.0
+
+
+def _get_google_public_certs() -> Dict[str, str]:
+    """Fetches Google's public key certificates for Firebase ID token verification."""
+    global _cached_certs, _certs_expiry
+    import time
+    import urllib.request
+    import json
+
+    now = time.time()
+    if _cached_certs and now < _certs_expiry:
+        return _cached_certs
+
+    url = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+    req = urllib.request.Request(url, headers={"User-Agent": "AgentGuard-Auth/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = resp.read().decode("utf-8")
+            certs = json.loads(data)
+            cache_ctrl = resp.headers.get("Cache-Control", "")
+            max_age = 3600
+            for part in cache_ctrl.split(","):
+                part = part.strip()
+                if part.startswith("max-age="):
+                    try:
+                        max_age = int(part.split("=")[1])
+                    except ValueError:
+                        pass
+            _cached_certs = certs
+            _certs_expiry = now + max_age
+            return _cached_certs
+    except Exception:
+        logger.warning("Failed to reach Google public cert endpoint")
+        raise HTTPException(status_code=503, detail="auth_service_unavailable")
+
+
+def _verify_with_public_certs(id_token: str, project_id: str) -> Dict[str, Any]:
+    """Cryptographically verifies a Firebase ID token using Google public certificates."""
+    import jwt
+    from cryptography.x509 import load_pem_x509_certificate
+
+    try:
+        headers = jwt.get_unverified_header(id_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+
+    if headers.get("alg") != "RS256":
+        raise HTTPException(status_code=401, detail="invalid_token_algorithm")
+
+    kid = headers.get("kid")
+    if not kid:
+        raise HTTPException(status_code=401, detail="missing_token_kid")
+
+    certs = _get_google_public_certs()
+    cert_pem = certs.get(kid)
+    if not cert_pem:
+        global _certs_expiry
+        _certs_expiry = 0
+        certs = _get_google_public_certs()
+        cert_pem = certs.get(kid)
+        if not cert_pem:
+            raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+
+    try:
+        cert_obj = load_pem_x509_certificate(cert_pem.encode("utf-8"))
+        pub_key = cert_obj.public_key()
+        issuer = f"https://securetoken.google.com/{project_id}"
+        decoded = jwt.decode(
+            id_token,
+            key=pub_key,
+            algorithms=["RS256"],
+            audience=project_id,
+            issuer=issuer,
+            options={"require": ["exp", "iat", "aud", "iss", "sub"]},
+        )
+        # Firebase convention: ensure sub is set as uid if uid is missing
+        if "uid" not in decoded and "sub" in decoded:
+            decoded["uid"] = decoded["sub"]
+        return decoded
+    except HTTPException:
+        raise
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+
+
 def _get_firebase_app():
     """Initializes and returns the Firebase Admin SDK app using FIREBASE_CREDENTIALS_PATH."""
     global _firebase_app_initialized
@@ -26,17 +117,16 @@ def _get_firebase_app():
         _firebase_app_initialized = True
         return firebase_admin.get_app()
 
-    # Rule: Read credentials exclusively from FIREBASE_CREDENTIALS_PATH. Never log or print the path.
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "agentguard---ai")
     cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
     if cred_path and os.path.exists(cred_path):
         cred = credentials.Certificate(cred_path)
-        app = firebase_admin.initialize_app(cred)
+        app = firebase_admin.initialize_app(cred, options={"projectId": project_id})
         _firebase_app_initialized = True
         return app
     else:
-        # Fallback to default application credentials if available, fail closed on verification
         try:
-            app = firebase_admin.initialize_app()
+            app = firebase_admin.initialize_app(options={"projectId": project_id})
             _firebase_app_initialized = True
             return app
         except Exception:
@@ -44,24 +134,32 @@ def _get_firebase_app():
 
 
 def default_verify_id_token(id_token: str, check_revoked: bool = False) -> Dict[str, Any]:
-    """Default token verifier using Firebase Admin SDK.
+    """Default token verifier using Firebase Admin SDK or Google public certificates.
     
     Fail closed: missing/expired/invalid token -> 401, unreachable -> 503.
     Never caches revoked tokens or exposes token strings in logs or exceptions.
     """
-    try:
-        from firebase_admin import auth
-        _get_firebase_app()
-        decoded = auth.verify_id_token(id_token, check_revoked=check_revoked)
-        return decoded
-    except Exception as exc:
-        logger.warning("Token verification rejected")
-        from firebase_admin import exceptions
-        from firebase_admin import auth as fb_auth
+    project_id = os.getenv("FIREBASE_PROJECT_ID", "agentguard---ai")
+    cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
 
-        if isinstance(exc, (fb_auth.CertificateFetchError, exceptions.UnavailableError)):
-            raise HTTPException(status_code=503, detail="auth_service_unavailable")
-        raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+    # If service account credentials file exists, use Firebase Admin SDK
+    if cred_path and os.path.exists(cred_path):
+        try:
+            from firebase_admin import auth
+            _get_firebase_app()
+            decoded = auth.verify_id_token(id_token, check_revoked=check_revoked)
+            return decoded
+        except Exception as exc:
+            logger.warning("Token verification rejected")
+            from firebase_admin import exceptions
+            from firebase_admin import auth as fb_auth
+
+            if isinstance(exc, (fb_auth.CertificateFetchError, exceptions.UnavailableError)):
+                raise HTTPException(status_code=503, detail="auth_service_unavailable")
+            raise HTTPException(status_code=401, detail="invalid_or_expired_token")
+
+    # If credentials file is not configured, verify cryptographically against Google public certificates
+    return _verify_with_public_certs(id_token, project_id)
 
 
 def get_token_verifier() -> VerifierFunc:
